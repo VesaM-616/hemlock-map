@@ -403,7 +403,7 @@
       The official NLS <i>maastokartta</i> layer needs a free API key. Get one at
       <a href="https://omatili.maanmittauslaitos.fi/user/new/avoimet-rajapintapalvelut?lang=en" target="_blank" rel="noopener">omatili.maanmittauslaitos.fi</a>
       (choose “open interface services”). Once saved, the layer appears in the
-      layer switcher in the top-right of the map. The Kapsi mirror layer works without a key.
+      layer switcher in the top-right of the map. The MapAnt terrain layer works without a key.
     </p>
     <div class="drow" style="justify-content: space-between;">
       <button class="danger" id="sWipe">Delete all data…</button>
@@ -526,6 +526,7 @@ map.addControl(new SearchControl());
 L.control.zoom({ position: 'topleft' }).addTo(map);
 
 const ATTR_MML = 'Map data © <a href="https://www.maanmittauslaitos.fi/en">National Land Survey of Finland</a>';
+
 function buildBaseLayers() {
   const layers = {
     'Topographic (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
@@ -536,9 +537,11 @@ function buildBaseLayers() {
       maxZoom: 19, maxNativeZoom: 19,
       attribution: 'Imagery © Esri, Maxar, Earthstar Geographics',
     }),
-    'Maastokartta (Kapsi mirror)': L.tileLayer('https://tiles.kartat.kapsi.fi/peruskartta/{z}/{x}/{y}.jpg', {
-      maxZoom: 19, maxNativeZoom: 18,
-      attribution: ATTR_MML + ' · tiles via <a href="https://kartat.kapsi.fi">kartat.kapsi.fi</a>',
+    /* Kapsi's mirror was shut down in 2025 (410 Gone) — MapAnt is the keyless
+       high-detail alternative, rendered from NLS laser-scanning data. */
+    'MapAnt (terrain detail)': L.tileLayer('https://wmts.mapant.fi/wmts_EPSG3857.php?z={z}&x={x}&y={y}', {
+      maxZoom: 19, maxNativeZoom: 17,
+      attribution: '<a href="https://www.mapant.fi">MapAnt.fi</a> (CC BY 4.0) · ' + ATTR_MML,
     }),
   };
   if (state.settings.nlsKey) {
