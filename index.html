@@ -199,6 +199,19 @@
   }
   .pin span { transform: rotate(45deg); font-size: .95rem; }
   .pin-pulse .pin { animation: pulse 1s ease-out 3; }
+
+  /* position marker: blue dot + heading cone */
+  .poswrap { pointer-events: none !important; }
+  .poswrap .poscone {
+    position: absolute; inset: 0; display: none; transform-origin: 50% 50%;
+    background: linear-gradient(to top, rgba(26,115,232,.5), rgba(26,115,232,.03) 72%);
+    clip-path: polygon(50% 50%, 20% 0%, 80% 0%);
+  }
+  .poswrap .posdot {
+    position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+    background: #1a73e8; border: 2.5px solid #fff; border-radius: 50%;
+    box-shadow: 0 1px 4px rgba(0,0,0,.45); pointer-events: auto; cursor: pointer;
+  }
   @keyframes pulse {
     0% { box-shadow: 0 0 0 0 rgba(46,107,70,.7); }
     100% { box-shadow: 0 0 0 18px rgba(46,107,70,0); }
@@ -453,6 +466,7 @@
 <input type="file" id="fileInput" accept=".json,application/json" style="display:none">
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-rotate@0.2.8/dist/leaflet-rotate.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
 <script>
 'use strict';
@@ -465,7 +479,7 @@ catch (e) { storageOk = false; document.getElementById('storageWarn').classList.
 
 const state = {
   entries: [],
-  settings: { nlsKey: '', view: null, baseLayer: null },
+  settings: { nlsKey: '', view: null, baseLayer: null, bearing: 0 },
 };
 
 function loadState() {
@@ -509,10 +523,15 @@ function parseTags(str) {
 }
 
 /* ================= Map & base layers ================= */
-const map = L.map('map', { zoomControl: false, doubleClickZoom: true });
+const map = L.map('map', {
+  zoomControl: false, doubleClickZoom: true,
+  rotate: true, touchRotate: true, rotateControl: false, bearing: 0,
+});
+window._hemlockMap = map; // handy for debugging
 const saved = state.settings.view;
 if (saved && saved.center) map.setView(saved.center, saved.zoom);
 else map.setView([64.8, 26.0], 5); // Finland
+if (map.setBearing && state.settings.bearing) map.setBearing(state.settings.bearing);
 
 L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
 
@@ -534,6 +553,7 @@ const SearchControl = L.Control.extend({
 });
 map.addControl(new SearchControl());
 L.control.zoom({ position: 'topleft' }).addTo(map);
+if (L.control.rotate) map.addControl(L.control.rotate({ position: 'topleft', closeOnZeroBearing: false }));
 
 const ATTR_MML = 'Map data © <a href="https://www.maanmittauslaitos.fi/en">National Land Survey of Finland</a>';
 
@@ -700,6 +720,7 @@ function cancelTool() {
   map.off('click', markerClickOnce);
   map.getContainer().classList.remove('cursor-crosshair', 'painting');
   activeTool = null;
+  map.doubleClickZoom.enable();
   hideHint();
   setToolButtons();
 }
@@ -723,6 +744,7 @@ function startMarkerTool() {
 function startPolygonTool() {
   cancelTool();
   activeTool = 'polygon';
+  map.doubleClickZoom.disable();
   activeDrawHandler = new L.Draw.Polygon(map, {
     allowIntersection: true,
     showArea: false,
@@ -732,9 +754,18 @@ function startPolygonTool() {
   showHint('Click to add corners · click the first point (or double-click) to finish');
   setToolButtons();
 }
+/* robust finish: leaflet.draw's own dblclick finish needs a precise hit on the last
+   vertex icon, which is unreliable when the map is rotated — finish on any dblclick */
+map.on('dblclick', () => {
+  if (activeTool === 'polygon' && activeDrawHandler && activeDrawHandler._markers && activeDrawHandler._markers.length >= 3) {
+    activeDrawHandler._finishShape();
+  }
+});
 map.on(L.Draw.Event.CREATED, e => {
   if (e.layerType === 'polygon') {
-    const ring = e.layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+    const ring = e.layer.getLatLngs()[0]
+      .map(ll => [ll.lat, ll.lng])
+      .filter((p, i, arr) => i === 0 || Math.abs(p[0] - arr[i - 1][0]) > 1e-9 || Math.abs(p[1] - arr[i - 1][1]) > 1e-9);
     if (ring.length >= 3) {
       pending = { kind: 'area', geometry: ring };
       cancelTool();
@@ -843,19 +874,77 @@ function toast(msg, ms = 2600) {
 }
 function toastHide() { document.getElementById('toast').classList.add('hidden'); }
 
+/* --- Position marker with heading cone (compass or GPS course) --- */
+const posMarkers = new Set();
+let gpsHeading = null;
+const compass = { requested: false, heading: null };
+
+function makePosMarker(latlng, interactive) {
+  const icon = L.divIcon({
+    className: 'poswrap',
+    html: '<div class="poscone"></div><div class="posdot"></div>',
+    iconSize: [44, 44], iconAnchor: [22, 22], popupAnchor: [0, -10],
+  });
+  const m = L.marker(latlng, { icon, rotateWithView: true, keyboard: false, interactive: !!interactive });
+  m.on('add', () => updateHeadingCones());
+  m.on('remove', () => posMarkers.delete(m));
+  posMarkers.add(m);
+  return m;
+}
+function updateHeadingCones() {
+  const h = compass.heading != null ? compass.heading : gpsHeading;
+  posMarkers.forEach(m => {
+    const el = m.getElement && m.getElement();
+    if (!el) return;
+    const cone = el.querySelector('.poscone');
+    if (!cone) return;
+    if (h == null) cone.style.display = 'none';
+    else { cone.style.display = 'block'; cone.style.transform = 'rotate(' + h + 'deg)'; }
+  });
+}
+function onOrient(e) {
+  let h = null;
+  if (typeof e.webkitCompassHeading === 'number' && isFinite(e.webkitCompassHeading)) h = e.webkitCompassHeading;
+  else if (e.absolute && typeof e.alpha === 'number' && isFinite(e.alpha)) h = 360 - e.alpha;
+  if (h == null) return;
+  const so = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle : 0;
+  compass.heading = ((h + so) % 360 + 360) % 360;
+  updateHeadingCones();
+}
+function enableCompass() {
+  /* must be called from a user gesture — iOS requires an explicit permission prompt */
+  if (compass.requested) return;
+  compass.requested = true;
+  const attach = () => {
+    const ev = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+    window.addEventListener(ev, onOrient);
+  };
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    DeviceOrientationEvent.requestPermission().then(p => { if (p === 'granted') attach(); }).catch(() => {});
+  } else attach();
+}
+function noteGpsHeading(coords) {
+  if (typeof coords.heading === 'number' && isFinite(coords.heading) && (coords.speed || 0) > 0.4) {
+    gpsHeading = coords.heading;
+  }
+  updateHeadingCones();
+}
+
 /* --- Locate me (GPS) --- */
 let geoLayer = null;
 function removeGeoLayer() { if (geoLayer) { map.removeLayer(geoLayer); geoLayer = null; } }
 function locateMe() {
   if (!('geolocation' in navigator)) { toast('This browser has no location support'); return; }
+  enableCompass();
   toast('Locating…', 12000);
   navigator.geolocation.getCurrentPosition(pos => {
     toastHide();
     const lat = pos.coords.latitude, lng = pos.coords.longitude;
     const acc = Math.round(pos.coords.accuracy || 0);
     removeGeoLayer();
+    noteGpsHeading(pos.coords);
     const ring = L.circle([lat, lng], { radius: Math.max(acc, 5), color: '#1a73e8', weight: 1, fillColor: '#1a73e8', fillOpacity: 0.12 });
-    const dot = L.circleMarker([lat, lng], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#1a73e8', fillOpacity: 1 });
+    const dot = makePosMarker([lat, lng], true);
     geoLayer = L.featureGroup([ring, dot]).addTo(map);
     const div = document.createElement('div');
     div.className = 'pop';
@@ -908,10 +997,17 @@ const CARDINALS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW
 const cardinal = b => CARDINALS[Math.round(b / 22.5) % 16];
 const fmtDist = m => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(m < 10000 ? 2 : 1) + ' km';
 
-const guide = { watchId: null, targetId: null, target: null, label: '', line: null, dot: null, ring: null };
+const guide = { watchId: null, targetId: null, target: null, label: '', line: null, dot: null, ring: null, lastWorldBearing: null };
+
+function renderGuideArrow() {
+  if (guide.lastWorldBearing == null) return;
+  const mb = map.getBearing ? map.getBearing() : 0;
+  document.getElementById('guideArrow').style.transform = 'rotate(' + (guide.lastWorldBearing + mb - 90) + 'deg)';
+}
 
 function startGuide(target, label, targetId) {
   if (!('geolocation' in navigator)) { toast('This browser has no location support'); return; }
+  enableCompass();
   stopGuide();
   guide.target = target;
   guide.label = label.length > 20 ? label.slice(0, 19) + '…' : label;
@@ -926,16 +1022,18 @@ function startGuide(target, label, targetId) {
     const acc = pos.coords.accuracy || 0;
     const d = here.distanceTo(guide.target);
     const b = bearingDeg(here, guide.target);
+    noteGpsHeading(pos.coords);
     if (!guide.dot) {
       guide.ring = L.circle(here, { radius: Math.max(acc, 5), color: '#1a73e8', weight: 1, fillColor: '#1a73e8', fillOpacity: 0.12 }).addTo(map);
-      guide.dot = L.circleMarker(here, { radius: 7, color: '#fff', weight: 2.5, fillColor: '#1a73e8', fillOpacity: 1 }).addTo(map);
+      guide.dot = makePosMarker(here, false).addTo(map);
       guide.line = L.polyline([here, guide.target], { color: '#1a73e8', weight: 3, dashArray: '6 8', opacity: 0.85 }).addTo(map);
     } else {
       guide.ring.setLatLng(here).setRadius(Math.max(acc, 5));
       guide.dot.setLatLng(here);
       guide.line.setLatLngs([here, guide.target]);
     }
-    document.getElementById('guideArrow').style.transform = 'rotate(' + (b - 90) + 'deg)';
+    guide.lastWorldBearing = b;
+    renderGuideArrow();
     document.getElementById('guideText').textContent =
       d <= 15 ? guide.label + ' — you have arrived! 🎉'
               : guide.label + ' · ' + fmtDist(d) + ' · ' + cardinal(b);
@@ -951,12 +1049,23 @@ function startGuide(target, label, targetId) {
 
 function stopGuide() {
   if (guide.watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(guide.watchId);
-  guide.watchId = null; guide.targetId = null; guide.target = null;
+  guide.watchId = null; guide.targetId = null; guide.target = null; guide.lastWorldBearing = null;
   [guide.line, guide.dot, guide.ring].forEach(l => { if (l) map.removeLayer(l); });
   guide.line = guide.dot = guide.ring = null;
   document.getElementById('guideBar').classList.add('hidden');
 }
 document.getElementById('guideStop').addEventListener('click', () => stopGuide());
+
+/* keep the guide arrow honest and remember rotation when the map is turned */
+let rotSaveT = null;
+map.on('rotate', () => {
+  renderGuideArrow();
+  clearTimeout(rotSaveT);
+  rotSaveT = setTimeout(() => {
+    state.settings.bearing = map.getBearing ? map.getBearing() : 0;
+    saveState();
+  }, 400);
+});
 
 /* --- Toolbox control --- */
 const Toolbox = L.Control.extend({
@@ -1526,8 +1635,9 @@ document.getElementById('sWipe').addEventListener('click', () => {
     'This wipes every marker, area and setting stored by this map in the browser. Export a Backup first if you might want it back.';
   cfmAction = () => {
     stopGuide();
+    if (map.setBearing) map.setBearing(0);
     state.entries = [];
-    state.settings = { nlsKey: '', view: null, baseLayer: null };
+    state.settings = { nlsKey: '', view: null, baseLayer: null, bearing: 0 };
     if (storageOk) localStorage.removeItem(LS_KEY);
     rebuildAllLayers();
     renderList();
