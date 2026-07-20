@@ -1,0 +1,1446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hemlock Field Map — plants &amp; fungi</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css">
+<style>
+  :root {
+    --green: #2e6b46;
+    --green-dark: #1f4d31;
+    --amber: #b7791f;
+    --violet: #6b46c1;
+    --bg: #f6f5f1;
+    --panel: #ffffff;
+    --ink: #24312a;
+    --muted: #6e7d74;
+    --line: #e3e1d9;
+    --danger: #b03a2e;
+    --radius: 10px;
+    font-size: 15px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ---------- Sidebar ---------- */
+  #sidebar {
+    width: 330px;
+    min-width: 330px;
+    height: 100%;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    z-index: 1200;
+    transition: margin-left .25s ease;
+  }
+  #sidebar.collapsed { margin-left: -330px; }
+  #sidebar header {
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #f2f7f3, #fff);
+  }
+  #sidebar h1 {
+    margin: 0;
+    font-size: 1.15rem;
+    letter-spacing: .02em;
+    color: var(--green-dark);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #sidebar h1 .leaf { font-size: 1.2rem; }
+  #sidebar .sub { margin: 2px 0 0; font-size: .78rem; color: var(--muted); }
+
+  .search-row { display: flex; gap: 8px; padding: 10px 12px 6px; }
+  .search-row input[type=search] {
+    flex: 1; padding: 7px 10px; border: 1px solid var(--line);
+    border-radius: var(--radius); font-size: .88rem; background: #fbfaf7;
+  }
+  .search-row select {
+    border: 1px solid var(--line); border-radius: var(--radius);
+    font-size: .8rem; background: #fbfaf7; color: var(--ink); padding: 0 6px;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px; }
+  .chip {
+    border: 1px solid var(--line); background: #fbfaf7; color: var(--muted);
+    border-radius: 999px; padding: 3px 11px; font-size: .76rem; cursor: pointer;
+    user-select: none; transition: all .12s;
+  }
+  .chip:hover { border-color: var(--green); color: var(--green-dark); }
+  .chip.on { background: var(--green); border-color: var(--green); color: #fff; }
+  .chip.tag.on { background: var(--violet); border-color: var(--violet); }
+  #tagChips:empty { display: none; }
+
+  #list {
+    list-style: none; margin: 6px 0 0; padding: 0 8px 8px;
+    overflow-y: auto; flex: 1;
+  }
+  #list .empty {
+    text-align: center; color: var(--muted); font-size: .85rem;
+    padding: 28px 18px; line-height: 1.5;
+  }
+  #list li.item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 8px; border-radius: var(--radius); cursor: pointer;
+    border: 1px solid transparent;
+  }
+  #list li.item:hover { background: #f2f6f2; }
+  #list li.item.selected { background: #e9f2ea; border-color: #c8dccb; }
+  .dot {
+    width: 30px; height: 30px; min-width: 30px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .95rem; color: #fff; box-shadow: inset 0 0 0 2px rgba(255,255,255,.35);
+  }
+  .item .info { flex: 1; min-width: 0; }
+  .item .nm { font-size: .89rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .meta { font-size: .72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .kind { font-size: .72rem; color: var(--muted); }
+  .item .actions { display: none; gap: 2px; }
+  .item:hover .actions { display: flex; }
+  .item .actions button {
+    border: none; background: none; cursor: pointer; font-size: .85rem;
+    padding: 3px 4px; border-radius: 6px; color: var(--muted);
+  }
+  .item .actions button:hover { background: #e2e8e2; color: var(--ink); }
+
+  #sidebar footer { border-top: 1px solid var(--line); padding: 8px 12px 10px; background: #fbfaf7; }
+  #stats { font-size: .73rem; color: var(--muted); margin-bottom: 6px; }
+  .btnrow { display: flex; flex-wrap: wrap; gap: 6px; }
+  .btnrow button {
+    flex: 1; min-width: 68px; border: 1px solid var(--line); background: #fff;
+    border-radius: 8px; padding: 6px 4px; font-size: .74rem; cursor: pointer; color: var(--ink);
+  }
+  .btnrow button:hover { border-color: var(--green); color: var(--green-dark); }
+
+  /* ---------- Map ---------- */
+  #map { flex: 1; height: 100%; z-index: 1; background: #dde5dd; }
+  #map.cursor-crosshair { cursor: crosshair; }
+  #map.painting { cursor: cell; touch-action: none; }
+
+  /* Sidebar toggle handle */
+  #sideToggle {
+    position: absolute; top: 12px; left: 12px; z-index: 1300;
+    width: 34px; height: 34px; border-radius: 8px;
+    border: 1px solid var(--line); background: #fff; cursor: pointer;
+    font-size: 1rem; box-shadow: 0 1px 4px rgba(0,0,0,.15);
+    display: none;
+  }
+  body.side-collapsed #sideToggle { display: block; }
+
+  /* ---------- Tool buttons (Leaflet control) ---------- */
+  .toolbox { display: flex; flex-direction: column; gap: 5px; }
+  .toolbox button {
+    width: 38px; height: 38px; border-radius: 9px; border: 1px solid #cfd6cf;
+    background: #fff; cursor: pointer; font-size: 1.05rem;
+    box-shadow: 0 1px 4px rgba(0,0,0,.18);
+  }
+  .toolbox button:hover { background: #eef4ee; }
+  .toolbox button.active { background: var(--green); border-color: var(--green-dark); }
+
+  /* ---------- Place search ---------- */
+  .searchbox { width: 272px; }
+  .search-input-row {
+    display: flex; align-items: center; background: #fff; border-radius: 9px;
+    border: 1px solid #cfd6cf; box-shadow: 0 1px 4px rgba(0,0,0,.18); overflow: hidden;
+  }
+  .search-input-row input {
+    flex: 1; border: none; outline: none; padding: 9px 11px; font-size: .85rem;
+    background: transparent; font-family: inherit; color: var(--ink); min-width: 0;
+  }
+  .search-input-row button {
+    border: none; background: none; cursor: pointer; font-size: 1rem; padding: 0 11px;
+  }
+  .search-input-row button:hover { opacity: .7; }
+  #searchResults {
+    list-style: none; margin: 5px 0 0; padding: 4px; background: #fff;
+    border-radius: 9px; box-shadow: 0 2px 10px rgba(0,0,0,.28);
+    max-height: 280px; overflow-y: auto;
+  }
+  #searchResults li { padding: 7px 9px; border-radius: 6px; cursor: pointer; font-size: .8rem; line-height: 1.35; }
+  #searchResults li:hover { background: #eef4ee; }
+  #searchResults li .sr-type { color: var(--muted); font-size: .7rem; }
+  #searchResults li.sr-note { color: var(--muted); cursor: default; }
+  #searchResults li.sr-note:hover { background: none; }
+  body.side-collapsed .leaflet-top.leaflet-left { margin-left: 44px; }
+
+  /* Hint + shape edit bars */
+  .mapbar {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 1400; background: rgba(31, 61, 41, .93); color: #fff;
+    padding: 8px 16px; border-radius: 999px; font-size: .82rem;
+    display: flex; align-items: center; gap: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.3); max-width: 90%;
+  }
+  .mapbar button {
+    border: none; border-radius: 999px; padding: 4px 12px; font-size: .78rem;
+    cursor: pointer; background: #fff; color: var(--green-dark); font-weight: 600;
+  }
+  .mapbar button.ghost { background: transparent; color: #d7e5da; border: 1px solid #6f8a77; }
+  .hidden { display: none !important; }
+
+  /* ---------- Markers ---------- */
+  .pin-wrap { position: relative; }
+  .pin {
+    width: 30px; height: 30px; border-radius: 50% 50% 50% 0;
+    transform: rotate(-45deg); transform-origin: center;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid rgba(255,255,255,.9);
+    box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  }
+  .pin span { transform: rotate(45deg); font-size: .95rem; }
+  .pin-pulse .pin { animation: pulse 1s ease-out 3; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(46,107,70,.7); }
+    100% { box-shadow: 0 0 0 18px rgba(46,107,70,0); }
+  }
+
+  /* ---------- Popups ---------- */
+  .leaflet-popup-content { margin: 12px 14px; font-family: inherit; }
+  .pop { min-width: 200px; max-width: 260px; }
+  .pop .pop-name { font-weight: 700; font-size: .95rem; margin-bottom: 2px; }
+  .pop .pop-sci { font-style: italic; color: var(--muted); font-size: .8rem; }
+  .pop .badge {
+    display: inline-block; font-size: .68rem; padding: 1px 8px; border-radius: 999px;
+    color: #fff; margin: 4px 4px 4px 0; vertical-align: middle;
+  }
+  .pop .pop-meta { font-size: .76rem; color: var(--muted); margin: 3px 0; }
+  .pop .pop-notes { font-size: .8rem; margin: 6px 0; white-space: pre-wrap; }
+  .pop .pop-tags { font-size: .72rem; color: var(--violet); }
+  .pop .pop-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .pop .pop-actions button {
+    flex: 1; border: 1px solid var(--line); background: #fbfaf7; border-radius: 7px;
+    font-size: .74rem; padding: 4px 2px; cursor: pointer;
+  }
+  .pop .pop-actions button:hover { border-color: var(--green); }
+  .pop .pop-actions button.danger:hover { border-color: var(--danger); color: var(--danger); }
+
+  /* ---------- Modals ---------- */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(20,30,24,.5); z-index: 2000;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .dialog {
+    background: #fff; border-radius: 14px; width: min(430px, 92vw);
+    max-height: 90vh; overflow-y: auto;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35); padding: 20px 22px;
+  }
+  .dialog h2 { margin: 0 0 14px; font-size: 1.02rem; color: var(--green-dark); }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: .76rem; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .field input[type=text], .field input[type=date], .field input[type=password], .field textarea, .field select {
+    width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: .88rem; font-family: inherit; background: #fbfaf7;
+  }
+  .field textarea { resize: vertical; min-height: 64px; }
+  .radio-row { display: flex; gap: 6px; }
+  .radio-row label {
+    flex: 1; border: 1px solid var(--line); border-radius: 8px; padding: 7px 4px;
+    text-align: center; cursor: pointer; font-size: .82rem; color: var(--ink); font-weight: 500;
+    margin: 0;
+  }
+  .radio-row input { display: none; }
+  .radio-row label.on { border-color: var(--green); background: #e9f2ea; color: var(--green-dark); }
+  .color-row { display: flex; align-items: center; gap: 10px; }
+  .color-row input[type=color] { width: 44px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 2px; cursor: pointer; }
+  .color-row .note { font-size: .72rem; color: var(--muted); }
+  .dialog .drow { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .dialog .drow button {
+    border-radius: 8px; padding: 8px 16px; font-size: .85rem; cursor: pointer;
+    border: 1px solid var(--line); background: #fff;
+  }
+  .dialog .drow button.primary { background: var(--green); border-color: var(--green-dark); color: #fff; font-weight: 600; }
+  .dialog .drow button.primary:hover { background: var(--green-dark); }
+  .dialog .drow button.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .dialog p.help { font-size: .78rem; color: var(--muted); line-height: 1.5; }
+  .dialog p.help a { color: var(--green-dark); }
+  .import-choice { display: flex; gap: 8px; margin: 10px 0; }
+  .import-choice button { flex: 1; padding: 10px 6px; border: 1px solid var(--line); border-radius: 8px; background: #fbfaf7; cursor: pointer; font-size: .82rem; }
+  .import-choice button:hover { border-color: var(--green); }
+
+  #storageWarn {
+    position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
+    z-index: 1500; background: #7c2d12; color: #fff; font-size: .76rem;
+    padding: 6px 14px; border-radius: 8px;
+  }
+
+  .mapbar.bottom { top: auto; bottom: 20px; }
+
+  /* ---------- Touch optimisations (no effect on mouse/desktop) ---------- */
+  body { -webkit-tap-highlight-color: transparent; }
+  @media (hover: none) {
+    /* no hover on touchscreens — keep list action buttons always visible */
+    .item .actions { display: flex; }
+  }
+  @media (pointer: coarse) {
+    .toolbox button { width: 46px; height: 46px; font-size: 1.25rem; }
+    #list li.item { padding: 12px 8px; }
+    .item .actions button { font-size: 1rem; padding: 6px 8px; }
+    .chip { padding: 6px 13px; }
+    .btnrow button { padding: 10px 4px; }
+    .pop .pop-actions button { padding: 9px 2px; font-size: .8rem; }
+    .mapbar button { padding: 8px 14px; }
+    /* 16px stops iOS Safari from auto-zooming the page when an input gets focus */
+    .search-input-row input, .search-row input[type=search],
+    .field input[type=text], .field input[type=date], .field input[type=password],
+    .field textarea { font-size: 16px; }
+  }
+
+  @media (max-width: 720px) {
+    #sidebar { position: absolute; left: 0; top: 0; bottom: 0; box-shadow: 4px 0 20px rgba(0,0,0,.2); }
+    .searchbox { width: min(272px, calc(100vw - 110px)); }
+  }
+</style>
+</head>
+<body>
+
+<aside id="sidebar">
+  <header>
+    <h1><span class="leaf">🌲</span> Hemlock Field Map</h1>
+    <p class="sub">Personal atlas of plants &amp; fungi · Finland</p>
+  </header>
+  <div class="search-row">
+    <input type="search" id="search" placeholder="Search name, notes, tags…">
+    <select id="sort" title="Sort">
+      <option value="newest">Newest</option>
+      <option value="oldest">Oldest</option>
+      <option value="name">Name A–Z</option>
+    </select>
+  </div>
+  <div class="chips" id="typeChips">
+    <span class="chip on" data-type="all">All</span>
+    <span class="chip" data-type="plant">🌿 Plants</span>
+    <span class="chip" data-type="fungus">🍄 Fungi</span>
+    <span class="chip" data-type="other">❖ Other</span>
+  </div>
+  <div class="chips" id="tagChips"></div>
+  <ul id="list"></ul>
+  <footer>
+    <div id="stats"></div>
+    <div class="btnrow">
+      <button id="btnFitAll" title="Zoom to show everything">⤢ Fit all</button>
+      <button id="btnExport" title="Download a JSON backup">⬇ Backup</button>
+      <button id="btnGeo" title="Download as GeoJSON">⬇ GeoJSON</button>
+      <button id="btnImport" title="Restore from a backup file">⬆ Import</button>
+      <button id="btnSettings" title="Settings">⚙ Settings</button>
+      <button id="btnHide" title="Hide panel">⟨ Hide</button>
+    </div>
+  </footer>
+</aside>
+
+<div id="map"></div>
+<button id="sideToggle" title="Show panel">☰</button>
+
+<div id="hint" class="mapbar hidden"><span id="hintText"></span><button class="ghost" id="hintCancel">✕ Cancel</button></div>
+<div id="toast" class="mapbar bottom hidden"><span id="toastText"></span></div>
+<div id="shapeBar" class="mapbar hidden">
+  <span id="shapeBarText">Editing shape — drag the points</span>
+  <button id="shapeSave">Save</button>
+  <button class="ghost" id="shapeCancel">Cancel</button>
+</div>
+<div id="storageWarn" class="hidden">⚠ Browser storage unavailable — use Backup/Import to keep your data safe.</div>
+
+<!-- Entry form modal -->
+<div class="overlay hidden" id="formOverlay">
+  <div class="dialog">
+    <h2 id="formTitle">New observation</h2>
+    <div class="field">
+      <label>Species / name *</label>
+      <input type="text" id="fName" placeholder="e.g. Kanttarelli / Cantharellus cibarius" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>Type</label>
+      <div class="radio-row" id="fTypeRow">
+        <label data-v="plant"><input type="radio" name="fType" value="plant">🌿 Plant</label>
+        <label data-v="fungus"><input type="radio" name="fType" value="fungus">🍄 Fungus</label>
+        <label data-v="other"><input type="radio" name="fType" value="other">❖ Other</label>
+      </div>
+    </div>
+    <div class="field">
+      <label>Date observed</label>
+      <input type="date" id="fDate">
+    </div>
+    <div class="field">
+      <label>Tags <span style="font-weight:400">(comma-separated, e.g. edible, rare, watch-list)</span></label>
+      <input type="text" id="fTags" placeholder="edible, good spot" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>Notes</label>
+      <textarea id="fNotes" placeholder="Abundance, habitat, condition…"></textarea>
+    </div>
+    <div class="field">
+      <label>Colour on map</label>
+      <div class="color-row">
+        <input type="color" id="fColor" value="#2e6b46">
+        <span class="note">Auto-set from type — change it to override.</span>
+      </div>
+    </div>
+    <div class="drow">
+      <button id="formCancel">Cancel</button>
+      <button class="primary" id="formSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div class="overlay hidden" id="setOverlay">
+  <div class="dialog">
+    <h2>Settings</h2>
+    <div class="field">
+      <label>NLS (Maanmittauslaitos) API key</label>
+      <input type="password" id="sNlsKey" placeholder="Paste your api key here" autocomplete="off">
+    </div>
+    <p class="help">
+      The official NLS <i>maastokartta</i> layer needs a free API key. Get one at
+      <a href="https://omatili.maanmittauslaitos.fi/user/new/avoimet-rajapintapalvelut?lang=en" target="_blank" rel="noopener">omatili.maanmittauslaitos.fi</a>
+      (choose “open interface services”). Once saved, the layer appears in the
+      layer switcher in the top-right of the map. The Kapsi mirror layer works without a key.
+    </p>
+    <div class="drow" style="justify-content: space-between;">
+      <button class="danger" id="sWipe">Delete all data…</button>
+      <span>
+        <button id="setCancel">Cancel</button>
+        <button class="primary" id="setSave">Save</button>
+      </span>
+    </div>
+  </div>
+</div>
+
+<!-- Import modal -->
+<div class="overlay hidden" id="impOverlay">
+  <div class="dialog">
+    <h2>Import backup</h2>
+    <p class="help" id="impInfo"></p>
+    <div class="import-choice">
+      <button id="impMerge">Merge<br><small>keep current + add new</small></button>
+      <button id="impReplace">Replace<br><small>discard current data</small></button>
+    </div>
+    <div class="drow"><button id="impCancel">Cancel</button></div>
+  </div>
+</div>
+
+<!-- Confirm modal -->
+<div class="overlay hidden" id="cfmOverlay">
+  <div class="dialog">
+    <h2 id="cfmTitle">Are you sure?</h2>
+    <p class="help" id="cfmText"></p>
+    <div class="drow">
+      <button id="cfmNo">Cancel</button>
+      <button class="danger" id="cfmYes">Delete</button>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".json,application/json" style="display:none">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script>
+'use strict';
+
+/* ================= Storage ================= */
+const LS_KEY = 'hemlockMap.v1';
+let storageOk = true;
+try { localStorage.setItem('__hm_test', '1'); localStorage.removeItem('__hm_test'); }
+catch (e) { storageOk = false; document.getElementById('storageWarn').classList.remove('hidden'); }
+
+const state = {
+  entries: [],
+  settings: { nlsKey: '', view: null, baseLayer: null },
+};
+
+function loadState() {
+  if (!storageOk) return;
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (Array.isArray(data.entries)) state.entries = data.entries;
+    if (data.settings) Object.assign(state.settings, data.settings);
+  } catch (e) { console.warn('Could not load saved data', e); }
+}
+function saveState() {
+  if (!storageOk) return;
+  try { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+  catch (e) { console.warn('Could not save', e); }
+}
+loadState();
+
+/* ================= Helpers ================= */
+const TYPE_META = {
+  plant:  { emoji: '🌿', label: 'Plant',  color: '#2e6b46' },
+  fungus: { emoji: '🍄', label: 'Fungus', color: '#b7791f' },
+  other:  { emoji: '❖',  label: 'Other',  color: '#6b46c1' },
+};
+const uid = () => 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
+const fmtDate = iso => {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${parseInt(d)}.${parseInt(m)}.${y}`;
+};
+function parseTags(str) {
+  const seen = new Set(); const out = [];
+  String(str || '').split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
+    const k = t.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); out.push(t); }
+  });
+  return out;
+}
+
+/* ================= Map & base layers ================= */
+const map = L.map('map', { zoomControl: false, doubleClickZoom: true });
+const saved = state.settings.view;
+if (saved && saved.center) map.setView(saved.center, saved.zoom);
+else map.setView([64.8, 26.0], 5); // Finland
+
+L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
+
+/* Place search control (added before zoom so it sits on top) */
+const SearchControl = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const div = L.DomUtil.create('div', 'searchbox');
+    div.innerHTML = `
+      <div class="search-input-row">
+        <input id="placeSearch" type="text" placeholder="Place or coordinates… ⏎" autocomplete="off" spellcheck="false">
+        <button id="placeGo" title="Search">🔍</button>
+      </div>
+      <ul id="searchResults" class="hidden"></ul>`;
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.disableScrollPropagation(div);
+    return div;
+  },
+});
+map.addControl(new SearchControl());
+L.control.zoom({ position: 'topleft' }).addTo(map);
+
+const ATTR_MML = 'Map data © <a href="https://www.maanmittauslaitos.fi/en">National Land Survey of Finland</a>';
+function buildBaseLayers() {
+  const layers = {
+    'Topographic (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, maxNativeZoom: 17,
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM · © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
+    }),
+    'Satellite (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19, maxNativeZoom: 19,
+      attribution: 'Imagery © Esri, Maxar, Earthstar Geographics',
+    }),
+    'Maastokartta (Kapsi mirror)': L.tileLayer('https://tiles.kartat.kapsi.fi/peruskartta/{z}/{x}/{y}.jpg', {
+      maxZoom: 19, maxNativeZoom: 18,
+      attribution: ATTR_MML + ' · tiles via <a href="https://kartat.kapsi.fi">kartat.kapsi.fi</a>',
+    }),
+  };
+  if (state.settings.nlsKey) {
+    layers['Maastokartta (NLS official)'] = L.tileLayer(
+      'https://avoin-karttakuva.maanmittauslaitos.fi/avoin/wmts/1.0.0/maastokartta/default/WGS84_Pseudo-Mercator/{z}/{y}/{x}.png?api-key=' + encodeURIComponent(state.settings.nlsKey), {
+      maxZoom: 19, maxNativeZoom: 16, attribution: ATTR_MML,
+    });
+  }
+  return layers;
+}
+
+let baseLayers = buildBaseLayers();
+let layerControl = null;
+let currentBaseName = null;
+
+function applyBaseLayers(preferredName) {
+  if (layerControl) { map.removeControl(layerControl); }
+  Object.values(baseLayers).forEach(l => { if (map.hasLayer(l)) map.removeLayer(l); });
+  baseLayers = buildBaseLayers();
+  const names = Object.keys(baseLayers);
+  const pick = (preferredName && baseLayers[preferredName]) ? preferredName : names[0];
+  baseLayers[pick].addTo(map);
+  currentBaseName = pick;
+  layerControl = L.control.layers(baseLayers, null, { position: 'topright', collapsed: true }).addTo(map);
+}
+applyBaseLayers(state.settings.baseLayer);
+
+map.on('baselayerchange', e => {
+  currentBaseName = e.name;
+  state.settings.baseLayer = e.name;
+  saveState();
+});
+map.on('moveend', () => {
+  const c = map.getCenter();
+  state.settings.view = { center: [c.lat, c.lng], zoom: map.getZoom() };
+  saveState();
+});
+
+/* ================= Entry layers ================= */
+const entriesGroup = L.featureGroup().addTo(map);
+const layerIndex = new Map(); // id -> leaflet layer
+
+function makeIcon(entry, pulse) {
+  const meta = TYPE_META[entry.type] || TYPE_META.other;
+  const color = entry.color || meta.color;
+  return L.divIcon({
+    className: 'pin-wrap' + (pulse ? ' pin-pulse' : ''),
+    html: `<div class="pin" style="background:${esc(color)}"><span>${meta.emoji}</span></div>`,
+    iconSize: [30, 30], iconAnchor: [15, 28], popupAnchor: [0, -26],
+  });
+}
+
+function makePopupNode(entry) {
+  const meta = TYPE_META[entry.type] || TYPE_META.other;
+  const color = entry.color || meta.color;
+  const div = document.createElement('div');
+  div.className = 'pop';
+  div.innerHTML = `
+    <div class="pop-name">${esc(entry.name)}</div>
+    <span class="badge" style="background:${esc(color)}">${meta.emoji} ${meta.label}</span>
+    ${entry.date ? `<span class="pop-meta">📅 ${esc(fmtDate(entry.date))}</span>` : ''}
+    ${entry.tags && entry.tags.length ? `<div class="pop-tags">🏷 ${esc(entry.tags.join(', '))}</div>` : ''}
+    ${entry.notes ? `<div class="pop-notes">${esc(entry.notes)}</div>` : ''}
+    <div class="pop-actions">
+      <button data-act="edit">✎ Edit</button>
+      <button data-act="shape">${entry.kind === 'marker' ? '✥ Move' : '⬡ Reshape'}</button>
+      <button data-act="del" class="danger">🗑</button>
+    </div>`;
+  div.addEventListener('click', ev => {
+    const btn = ev.target.closest('button[data-act]');
+    if (!btn) return;
+    map.closePopup();
+    if (btn.dataset.act === 'edit') openForm({ mode: 'edit', id: entry.id });
+    else if (btn.dataset.act === 'del') confirmDelete(entry.id);
+    else if (btn.dataset.act === 'shape') startShapeEdit(entry.id);
+  });
+  return div;
+}
+
+function createLayerForEntry(entry) {
+  let layer;
+  const meta = TYPE_META[entry.type] || TYPE_META.other;
+  const color = entry.color || meta.color;
+  if (entry.kind === 'marker') {
+    layer = L.marker(entry.geometry, { icon: makeIcon(entry) });
+  } else {
+    layer = L.polygon(entry.geometry, {
+      color, weight: 2.5, fillColor: color, fillOpacity: 0.28,
+    });
+  }
+  layer.bindPopup(() => makePopupNode(getEntry(entry.id)), { maxWidth: 280 });
+  layer.on('click', () => selectInList(entry.id, false));
+  layer.entryId = entry.id;
+  return layer;
+}
+
+function addEntryLayer(entry) {
+  const layer = createLayerForEntry(entry);
+  entriesGroup.addLayer(layer);
+  layerIndex.set(entry.id, layer);
+}
+function refreshEntryLayer(entry) {
+  const old = layerIndex.get(entry.id);
+  if (old) entriesGroup.removeLayer(old);
+  addEntryLayer(entry);
+}
+function removeEntryLayer(id) {
+  const l = layerIndex.get(id);
+  if (l) entriesGroup.removeLayer(l);
+  layerIndex.delete(id);
+}
+function rebuildAllLayers() {
+  entriesGroup.clearLayers();
+  layerIndex.clear();
+  state.entries.forEach(addEntryLayer);
+}
+rebuildAllLayers();
+
+const getEntry = id => state.entries.find(e => e.id === id);
+
+/* ================= Tools ================= */
+const hint = document.getElementById('hint');
+const hintText = document.getElementById('hintText');
+let activeTool = null;      // 'marker' | 'polygon' | 'paint'
+let activeDrawHandler = null;
+let pending = null;         // { kind, geometry }
+
+function showHint(text) { hintText.textContent = text; hint.classList.remove('hidden'); }
+function hideHint() { hint.classList.add('hidden'); }
+
+function setToolButtons() {
+  document.querySelectorAll('.toolbox button').forEach(b => {
+    b.classList.toggle('active', b.dataset.tool === activeTool);
+  });
+}
+
+function cancelTool() {
+  if (activeDrawHandler) { activeDrawHandler.disable(); activeDrawHandler = null; }
+  stopPaint(true);
+  map.off('click', markerClickOnce);
+  map.getContainer().classList.remove('cursor-crosshair', 'painting');
+  activeTool = null;
+  hideHint();
+  setToolButtons();
+}
+
+/* --- Marker tool --- */
+function markerClickOnce(e) {
+  pending = { kind: 'marker', geometry: [e.latlng.lat, e.latlng.lng] };
+  cancelTool();
+  openForm({ mode: 'create' });
+}
+function startMarkerTool() {
+  cancelTool();
+  activeTool = 'marker';
+  map.getContainer().classList.add('cursor-crosshair');
+  map.on('click', markerClickOnce);
+  showHint('Click the map to place a marker');
+  setToolButtons();
+}
+
+/* --- Polygon tool (Leaflet.draw) --- */
+function startPolygonTool() {
+  cancelTool();
+  activeTool = 'polygon';
+  activeDrawHandler = new L.Draw.Polygon(map, {
+    allowIntersection: true,
+    showArea: false,
+    shapeOptions: { color: '#2e6b46', weight: 2.5, fillOpacity: 0.25 },
+  });
+  activeDrawHandler.enable();
+  showHint('Click to add corners · click the first point (or double-click) to finish');
+  setToolButtons();
+}
+map.on(L.Draw.Event.CREATED, e => {
+  if (e.layerType === 'polygon') {
+    const ring = e.layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+    if (ring.length >= 3) {
+      pending = { kind: 'area', geometry: ring };
+      cancelTool();
+      openForm({ mode: 'create' });
+      return;
+    }
+  }
+  cancelTool();
+});
+map.on('draw:drawstop', () => { if (activeTool === 'polygon' && !pending) { /* cancelled */ activeTool = null; hideHint(); setToolButtons(); } });
+
+/* --- Freehand paint tool --- */
+let paint = { on: false, drawing: false, pts: [], line: null };
+function startPaintTool() {
+  cancelTool();
+  activeTool = 'paint';
+  paint.on = true;
+  map.dragging.disable();
+  if (map.touchZoom) map.touchZoom.disable();
+  map.getContainer().classList.add('painting');
+  map.on('mousedown', paintDown);
+  map.on('mousemove', paintMove);
+  map.on('mouseup', paintUp);
+  document.addEventListener('mouseup', paintDocUp);
+  const el = map.getContainer();
+  el.addEventListener('touchstart', touchPaintStart, { passive: false });
+  el.addEventListener('touchmove', touchPaintMove, { passive: false });
+  el.addEventListener('touchend', touchPaintEnd, { passive: false });
+  showHint('Drag (finger or mouse) to paint an area outline · release to finish');
+  setToolButtons();
+}
+/* touch → same paint pipeline (preventDefault stops map panning & simulated mouse events) */
+function touchPaintStart(e) {
+  if (!paint.on) return;
+  if (e.touches.length > 1) { if (paint.drawing) paintUp(); return; }
+  e.preventDefault();
+  paintDown({ latlng: map.mouseEventToLatLng(e.touches[0]) });
+}
+function touchPaintMove(e) {
+  if (!paint.on || !paint.drawing || e.touches.length !== 1) return;
+  e.preventDefault();
+  paintMove({ latlng: map.mouseEventToLatLng(e.touches[0]) });
+}
+function touchPaintEnd(e) {
+  if (!paint.on || !paint.drawing) return;
+  e.preventDefault();
+  paintUp();
+}
+function paintDown(e) {
+  if (!paint.on) return;
+  paint.drawing = true;
+  paint.pts = [e.latlng];
+  paint.line = L.polyline(paint.pts, { color: '#2e6b46', weight: 3, dashArray: '4 6' }).addTo(map);
+}
+function paintMove(e) {
+  if (!paint.on || !paint.drawing) return;
+  const lastPt = map.latLngToContainerPoint(paint.pts[paint.pts.length - 1]);
+  const curPt = map.latLngToContainerPoint(e.latlng);
+  if (lastPt.distanceTo(curPt) > 5) {
+    paint.pts.push(e.latlng);
+    paint.line.setLatLngs(paint.pts);
+  }
+}
+function paintUp() {
+  if (!paint.on || !paint.drawing) return;
+  paint.drawing = false;
+  const pts = paint.pts;
+  if (pts.length >= 3) {
+    // simplify in pixel space
+    const cps = pts.map(ll => map.latLngToLayerPoint(ll));
+    const simplified = L.LineUtil.simplify(cps, 2.2).map(p => map.layerPointToLatLng(p));
+    const ring = (simplified.length >= 3 ? simplified : pts).map(ll => [ll.lat, ll.lng]);
+    pending = { kind: 'area', geometry: ring };
+    cancelTool();
+    openForm({ mode: 'create' });
+    return;
+  }
+  if (paint.line) { map.removeLayer(paint.line); paint.line = null; }
+  paint.pts = [];
+}
+function paintDocUp() { if (paint.on && paint.drawing) paintUp(); }
+function stopPaint(silent) {
+  if (!paint.on) return;
+  paint.on = false; paint.drawing = false;
+  if (paint.line) { map.removeLayer(paint.line); paint.line = null; }
+  paint.pts = [];
+  map.dragging.enable();
+  if (map.touchZoom) map.touchZoom.enable();
+  map.off('mousedown', paintDown);
+  map.off('mousemove', paintMove);
+  map.off('mouseup', paintUp);
+  document.removeEventListener('mouseup', paintDocUp);
+  const el = map.getContainer();
+  el.removeEventListener('touchstart', touchPaintStart);
+  el.removeEventListener('touchmove', touchPaintMove);
+  el.removeEventListener('touchend', touchPaintEnd);
+}
+
+/* --- Toast messages --- */
+let toastTimer = null;
+function toast(msg, ms = 2600) {
+  document.getElementById('toastText').textContent = msg;
+  document.getElementById('toast').classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(toastHide, ms);
+}
+function toastHide() { document.getElementById('toast').classList.add('hidden'); }
+
+/* --- Locate me (GPS) --- */
+let geoLayer = null;
+function removeGeoLayer() { if (geoLayer) { map.removeLayer(geoLayer); geoLayer = null; } }
+function locateMe() {
+  if (!('geolocation' in navigator)) { toast('This browser has no location support'); return; }
+  toast('Locating…', 12000);
+  navigator.geolocation.getCurrentPosition(pos => {
+    toastHide();
+    const lat = pos.coords.latitude, lng = pos.coords.longitude;
+    const acc = Math.round(pos.coords.accuracy || 0);
+    removeGeoLayer();
+    const ring = L.circle([lat, lng], { radius: Math.max(acc, 5), color: '#1a73e8', weight: 1, fillColor: '#1a73e8', fillOpacity: 0.12 });
+    const dot = L.circleMarker([lat, lng], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#1a73e8', fillOpacity: 1 });
+    geoLayer = L.featureGroup([ring, dot]).addTo(map);
+    const div = document.createElement('div');
+    div.className = 'pop';
+    div.innerHTML = `
+      <div class="pop-name">My location</div>
+      <div class="pop-meta">${lat.toFixed(5)}, ${lng.toFixed(5)}${acc ? ' · ±' + acc + ' m' : ''}</div>
+      <div class="pop-actions">
+        <button data-act="mark">➕ Mark this spot</button>
+        <button data-act="remove">✕ Remove</button>
+      </div>`;
+    div.addEventListener('click', ev => {
+      const b = ev.target.closest('button[data-act]');
+      if (!b) return;
+      map.closePopup();
+      if (b.dataset.act === 'mark') {
+        pending = { kind: 'marker', geometry: [lat, lng] };
+        openForm({ mode: 'create' });
+      } else removeGeoLayer();
+    });
+    dot.bindPopup(div, { maxWidth: 280 });
+    map.flyTo([lat, lng], Math.max(map.getZoom(), 16), { duration: 0.9 });
+    let opened = false;
+    const openIt = () => { if (!opened && geoLayer) { opened = true; dot.openPopup(); } };
+    map.once('moveend', openIt);
+    setTimeout(openIt, 1300);
+  }, err => {
+    toast(err.code === 1 ? 'Location permission was denied' : 'Could not get a location fix', 3500);
+  }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 });
+}
+
+/* --- Toolbox control --- */
+const Toolbox = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd() {
+    const div = L.DomUtil.create('div', 'toolbox leaflet-bar-none');
+    div.innerHTML = `
+      <button data-tool="marker" title="Add marker">📍</button>
+      <button data-tool="polygon" title="Draw area (click corners)">⬡</button>
+      <button data-tool="paint" title="Paint area (freehand)">🖌️</button>
+      <button data-tool="locate" title="My location (GPS)">🧭</button>`;
+    L.DomEvent.disableClickPropagation(div);
+    div.addEventListener('click', ev => {
+      const b = ev.target.closest('button');
+      if (!b) return;
+      const t = b.dataset.tool;
+      if (t === 'locate') { locateMe(); return; }
+      if (activeTool === t) { cancelTool(); return; }
+      if (t === 'marker') startMarkerTool();
+      else if (t === 'polygon') startPolygonTool();
+      else if (t === 'paint') startPaintTool();
+    });
+    return div;
+  },
+});
+map.addControl(new Toolbox());
+document.getElementById('hintCancel').addEventListener('click', cancelTool);
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (!document.getElementById('formOverlay').classList.contains('hidden')) closeForm();
+    else if (shapeEdit.id) endShapeEdit(false);
+    else cancelTool();
+    closeOverlay('setOverlay'); closeOverlay('impOverlay'); closeOverlay('cfmOverlay');
+  }
+});
+
+/* ================= Place / coordinate search ================= */
+const psInput = document.getElementById('placeSearch');
+const psResults = document.getElementById('searchResults');
+let searchPin = null;
+
+function clearSearchResults() { psResults.innerHTML = ''; psResults.classList.add('hidden'); }
+function removeSearchPin() { if (searchPin) { map.removeLayer(searchPin); searchPin = null; } }
+
+function dropSearchPin(lat, lng, label) {
+  removeSearchPin();
+  const icon = L.divIcon({
+    className: 'pin-wrap',
+    html: `<div class="pin" style="background:#1d4ed8"><span>🔎</span></div>`,
+    iconSize: [30, 30], iconAnchor: [15, 28], popupAnchor: [0, -26],
+  });
+  searchPin = L.marker([lat, lng], { icon }).addTo(map);
+  const div = document.createElement('div');
+  div.className = 'pop';
+  div.innerHTML = `
+    <div class="pop-name">${esc(label)}</div>
+    <div class="pop-meta">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
+    <div class="pop-actions">
+      <button data-act="save">➕ Save as marker</button>
+      <button data-act="remove">✕ Remove</button>
+    </div>`;
+  div.addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-act]');
+    if (!b) return;
+    map.closePopup();
+    if (b.dataset.act === 'save') {
+      pending = { kind: 'marker', geometry: [lat, lng], prefillName: label === 'Coordinates' ? '' : label };
+      removeSearchPin();
+      openForm({ mode: 'create' });
+    } else {
+      removeSearchPin();
+    }
+  });
+  searchPin.bindPopup(div, { maxWidth: 280 });
+  // open after any fly animation lands (opening mid-animation can silently fail)
+  const pinRef = searchPin;
+  let opened = false;
+  const openIt = () => {
+    if (opened || searchPin !== pinRef) return;
+    opened = true;
+    pinRef.openPopup();
+  };
+  map.once('moveend', openIt);
+  setTimeout(openIt, 1300);
+}
+
+/* Accepts "64.5, 26.0" · "64,5 26,0" · "N 64.5 E 26.0" · "64.5° N, 26.0° E" */
+function parseCoordQuery(q) {
+  const cleaned = q.trim().replace(/°/g, '');
+  const m = cleaned.match(/^([NSns])?\s*(-?\d{1,2}(?:[.,]\d+)?)\s*([NSns])?[\s,;]\s*([EWew])?\s*(-?\d{1,3}(?:[.,]\d+)?)\s*([EWew])?$/);
+  if (!m) return null;
+  let lat = parseFloat(m[2].replace(',', '.'));
+  let lng = parseFloat(m[5].replace(',', '.'));
+  const latH = (m[1] || m[3] || '').toUpperCase();
+  const lngH = (m[4] || m[6] || '').toUpperCase();
+  if (latH === 'S') lat = -Math.abs(lat);
+  if (lngH === 'W') lng = -Math.abs(lng);
+  if (isNaN(lat) || isNaN(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+  return [lat, lng];
+}
+
+async function runPlaceSearch() {
+  const q = psInput.value.trim();
+  if (!q) return;
+  clearSearchResults();
+  const c = parseCoordQuery(q);
+  if (c) {
+    map.flyTo(c, Math.max(map.getZoom(), 13), { duration: 0.9 });
+    dropSearchPin(c[0], c[1], 'Coordinates');
+    return;
+  }
+  psResults.innerHTML = '<li class="sr-note">Searching…</li>';
+  psResults.classList.remove('hidden');
+  try {
+    const base = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&accept-language=fi&q=' + encodeURIComponent(q);
+    let rs = await (await fetch(base + '&countrycodes=fi')).json();
+    if (!rs.length) rs = await (await fetch(base)).json();  // fall back to worldwide
+    if (!rs.length) { psResults.innerHTML = '<li class="sr-note">No results found.</li>'; return; }
+    psResults.innerHTML = rs.map((r, i) => {
+      const parts = r.display_name.split(',').map(s => s.trim());
+      return `<li data-i="${i}">
+        <div>${esc(parts.slice(0, 2).join(', '))}</div>
+        <div class="sr-type">${esc(r.type || '')}${parts.length > 2 ? ' · ' + esc(parts.slice(2, 5).join(', ')) : ''}</div>
+      </li>`;
+    }).join('');
+    psResults.querySelectorAll('li[data-i]').forEach(li => {
+      li.addEventListener('click', () => {
+        const r = rs[+li.dataset.i];
+        clearSearchResults();
+        const lat = +r.lat, lon = +r.lon;
+        if (r.boundingbox) {
+          const bb = r.boundingbox.map(Number);
+          map.flyToBounds([[bb[0], bb[2]], [bb[1], bb[3]]], { duration: 0.9, maxZoom: 15 });
+        } else {
+          map.flyTo([lat, lon], 13, { duration: 0.9 });
+        }
+        dropSearchPin(lat, lon, r.display_name.split(',')[0]);
+      });
+    });
+  } catch (err) {
+    psResults.innerHTML = '<li class="sr-note">Search failed — check your internet connection.</li>';
+  }
+}
+psInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') runPlaceSearch();
+  else if (e.key === 'Escape') { clearSearchResults(); psInput.blur(); }
+});
+document.getElementById('placeGo').addEventListener('click', runPlaceSearch);
+document.addEventListener('click', e => { if (!e.target.closest('.searchbox')) clearSearchResults(); });
+
+/* ================= Shape / position editing ================= */
+const shapeBar = document.getElementById('shapeBar');
+let shapeEdit = { id: null, backup: null, layer: null };
+
+function startShapeEdit(id) {
+  const entry = getEntry(id);
+  const layer = layerIndex.get(id);
+  if (!entry || !layer) return;
+  cancelTool();
+  if (shapeEdit.id) endShapeEdit(false);
+  shapeEdit = { id, backup: JSON.parse(JSON.stringify(entry.geometry)), layer };
+  if (entry.kind === 'marker') {
+    layer.dragging && layer.dragging.enable();
+    document.getElementById('shapeBarText').textContent = 'Drag the marker to its new spot';
+  } else {
+    layer.editing && layer.editing.enable();
+    document.getElementById('shapeBarText').textContent = 'Drag the points to reshape the area';
+  }
+  shapeBar.classList.remove('hidden');
+}
+function endShapeEdit(save) {
+  const { id, backup, layer } = shapeEdit;
+  if (!id) return;
+  const entry = getEntry(id);
+  shapeBar.classList.add('hidden');
+  shapeEdit = { id: null, backup: null, layer: null };
+  if (!entry || !layer) return;
+  if (entry.kind === 'marker') {
+    layer.dragging && layer.dragging.disable();
+    if (save) {
+      const ll = layer.getLatLng();
+      entry.geometry = [ll.lat, ll.lng];
+    } else {
+      layer.setLatLng(backup);
+    }
+  } else {
+    layer.editing && layer.editing.disable();
+    if (save) {
+      entry.geometry = layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+    } else {
+      layer.setLatLngs(backup);
+    }
+  }
+  if (save) { entry.updatedAt = new Date().toISOString(); saveState(); }
+  renderList();
+}
+document.getElementById('shapeSave').addEventListener('click', () => endShapeEdit(true));
+document.getElementById('shapeCancel').addEventListener('click', () => endShapeEdit(false));
+
+/* ================= Entry form ================= */
+const formOverlay = document.getElementById('formOverlay');
+let formCtx = { mode: 'create', id: null };
+let colorTouched = false;
+
+const fName = document.getElementById('fName');
+const fDate = document.getElementById('fDate');
+const fTags = document.getElementById('fTags');
+const fNotes = document.getElementById('fNotes');
+const fColor = document.getElementById('fColor');
+
+function selectedType() {
+  const r = document.querySelector('#fTypeRow input:checked');
+  return r ? r.value : 'plant';
+}
+function setType(t) {
+  document.querySelectorAll('#fTypeRow input').forEach(i => { i.checked = i.value === t; });
+  document.querySelectorAll('#fTypeRow label').forEach(l => l.classList.toggle('on', l.dataset.v === t));
+}
+document.getElementById('fTypeRow').addEventListener('change', () => {
+  const t = selectedType();
+  document.querySelectorAll('#fTypeRow label').forEach(l => l.classList.toggle('on', l.dataset.v === t));
+  if (!colorTouched) fColor.value = TYPE_META[t].color;
+});
+fColor.addEventListener('input', () => { colorTouched = true; });
+
+function openForm(ctx) {
+  formCtx = ctx;
+  colorTouched = false;
+  if (ctx.mode === 'edit') {
+    const entry = getEntry(ctx.id);
+    if (!entry) return;
+    document.getElementById('formTitle').textContent = 'Edit — ' + entry.name;
+    fName.value = entry.name;
+    setType(entry.type);
+    fDate.value = entry.date || '';
+    fTags.value = (entry.tags || []).join(', ');
+    fNotes.value = entry.notes || '';
+    fColor.value = entry.color || TYPE_META[entry.type].color;
+    colorTouched = !!entry.color && entry.color !== TYPE_META[entry.type].color;
+  } else {
+    document.getElementById('formTitle').textContent = pending && pending.kind === 'area' ? 'New area' : 'New marker';
+    fName.value = (pending && pending.prefillName) || '';
+    setType('plant');
+    fDate.value = todayStr();
+    fTags.value = '';
+    fNotes.value = '';
+    fColor.value = TYPE_META.plant.color;
+  }
+  formOverlay.classList.remove('hidden');
+  setTimeout(() => fName.focus(), 50);
+}
+function closeForm() {
+  formOverlay.classList.add('hidden');
+  pending = null;
+}
+document.getElementById('formCancel').addEventListener('click', closeForm);
+formOverlay.addEventListener('mousedown', e => { if (e.target === formOverlay) closeForm(); });
+
+document.getElementById('formSave').addEventListener('click', saveForm);
+fName.addEventListener('keydown', e => { if (e.key === 'Enter') saveForm(); });
+
+function saveForm() {
+  const name = fName.value.trim();
+  if (!name) { fName.focus(); fName.style.borderColor = 'var(--danger)'; return; }
+  const type = selectedType();
+  const color = fColor.value.toLowerCase() === TYPE_META[type].color.toLowerCase() ? null : fColor.value;
+  const fields = {
+    name, type,
+    date: fDate.value || null,
+    tags: parseTags(fTags.value),
+    notes: fNotes.value.trim(),
+    color,
+  };
+  if (formCtx.mode === 'edit') {
+    const entry = getEntry(formCtx.id);
+    if (entry) {
+      Object.assign(entry, fields, { updatedAt: new Date().toISOString() });
+      refreshEntryLayer(entry);
+    }
+  } else if (pending) {
+    const entry = Object.assign({
+      id: uid(), kind: pending.kind, geometry: pending.geometry,
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    }, fields);
+    state.entries.push(entry);
+    addEntryLayer(entry);
+  }
+  saveState();
+  closeForm();
+  renderList();
+}
+
+/* ================= Delete ================= */
+let cfmAction = null;
+function confirmDelete(id) {
+  const entry = getEntry(id);
+  if (!entry) return;
+  document.getElementById('cfmTitle').textContent = 'Delete “' + entry.name + '”?';
+  document.getElementById('cfmText').textContent = 'This removes the ' + (entry.kind === 'marker' ? 'marker' : 'area') + ' from the map and the index. A Backup file is the only way to get it back.';
+  cfmAction = () => {
+    state.entries = state.entries.filter(e => e.id !== id);
+    removeEntryLayer(id);
+    saveState();
+    renderList();
+  };
+  document.getElementById('cfmOverlay').classList.remove('hidden');
+}
+document.getElementById('cfmYes').addEventListener('click', () => {
+  if (cfmAction) cfmAction();
+  cfmAction = null;
+  closeOverlay('cfmOverlay');
+});
+document.getElementById('cfmNo').addEventListener('click', () => { cfmAction = null; closeOverlay('cfmOverlay'); });
+
+function closeOverlay(id) { document.getElementById(id).classList.add('hidden'); }
+
+/* ================= Index / list ================= */
+const listEl = document.getElementById('list');
+const searchEl = document.getElementById('search');
+const sortEl = document.getElementById('sort');
+let typeFilter = 'all';
+let tagFilter = new Set();
+let selectedId = null;
+
+document.getElementById('typeChips').addEventListener('click', e => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  typeFilter = chip.dataset.type;
+  document.querySelectorAll('#typeChips .chip').forEach(c => c.classList.toggle('on', c === chip));
+  renderList();
+});
+searchEl.addEventListener('input', renderList);
+sortEl.addEventListener('change', renderList);
+
+function allTags() {
+  const counts = new Map();
+  state.entries.forEach(e => (e.tags || []).forEach(t => {
+    const k = t.toLowerCase();
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }));
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 24).map(([t]) => t);
+}
+
+function renderTagChips() {
+  const el = document.getElementById('tagChips');
+  const tags = allTags();
+  tagFilter.forEach(t => { if (!tags.includes(t)) tagFilter.delete(t); });
+  el.innerHTML = tags.map(t =>
+    `<span class="chip tag ${tagFilter.has(t) ? 'on' : ''}" data-tag="${esc(t)}">🏷 ${esc(t)}</span>`).join('');
+}
+document.getElementById('tagChips').addEventListener('click', e => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  const t = chip.dataset.tag;
+  if (tagFilter.has(t)) tagFilter.delete(t); else tagFilter.add(t);
+  renderList();
+});
+
+function filteredEntries() {
+  const q = searchEl.value.trim().toLowerCase();
+  let arr = state.entries.filter(e => {
+    if (typeFilter !== 'all' && e.type !== typeFilter) return false;
+    if (tagFilter.size && ![...tagFilter].every(t => (e.tags || []).some(x => x.toLowerCase() === t))) return false;
+    if (q) {
+      const hay = [e.name, e.notes, (e.tags || []).join(' '), e.date || ''].join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  const sort = sortEl.value;
+  if (sort === 'name') arr.sort((a, b) => a.name.localeCompare(b.name, 'fi'));
+  else if (sort === 'oldest') arr.sort((a, b) => (a.date || a.createdAt || '').localeCompare(b.date || b.createdAt || ''));
+  else arr.sort((a, b) => (b.date || b.createdAt || '').localeCompare(a.date || a.createdAt || ''));
+  return arr;
+}
+
+function renderList() {
+  renderTagChips();
+  const arr = filteredEntries();
+  if (!state.entries.length) {
+    listEl.innerHTML = `<li class="empty">No observations yet.<br><br>
+      Use the tools on the map:<br>📍 place a marker · ⬡ draw an area · 🖌️ paint freehand</li>`;
+  } else if (!arr.length) {
+    listEl.innerHTML = `<li class="empty">Nothing matches the current search/filters.</li>`;
+  } else {
+    listEl.innerHTML = arr.map(e => {
+      const meta = TYPE_META[e.type] || TYPE_META.other;
+      const color = e.color || meta.color;
+      const parts = [meta.label.toLowerCase()];
+      if (e.date) parts.push(fmtDate(e.date));
+      if (e.tags && e.tags.length) parts.push(e.tags.join(', '));
+      return `<li class="item ${e.id === selectedId ? 'selected' : ''}" data-id="${e.id}">
+        <span class="dot" style="background:${esc(color)}">${meta.emoji}</span>
+        <div class="info">
+          <div class="nm">${esc(e.name)}</div>
+          <div class="meta">${esc(parts.join(' · '))}</div>
+        </div>
+        <span class="kind" title="${e.kind === 'marker' ? 'Marker' : 'Area'}">${e.kind === 'marker' ? '📍' : '⬡'}</span>
+        <div class="actions">
+          <button data-act="edit" title="Edit">✎</button>
+          <button data-act="del" title="Delete">🗑</button>
+        </div>
+      </li>`;
+    }).join('');
+  }
+  const total = state.entries.length;
+  const plants = state.entries.filter(e => e.type === 'plant').length;
+  const fungi = state.entries.filter(e => e.type === 'fungus').length;
+  document.getElementById('stats').textContent =
+    `${arr.length} shown / ${total} total · 🌿 ${plants} · 🍄 ${fungi}`;
+}
+
+listEl.addEventListener('click', e => {
+  const li = e.target.closest('li.item');
+  if (!li) return;
+  const id = li.dataset.id;
+  const btn = e.target.closest('button[data-act]');
+  if (btn) {
+    if (btn.dataset.act === 'edit') openForm({ mode: 'edit', id });
+    else if (btn.dataset.act === 'del') confirmDelete(id);
+    return;
+  }
+  flyToEntry(id);
+});
+
+function selectInList(id, scroll = true) {
+  selectedId = id;
+  document.querySelectorAll('#list li.item').forEach(li => li.classList.toggle('selected', li.dataset.id === id));
+  if (scroll) {
+    const li = document.querySelector(`#list li.item[data-id="${id}"]`);
+    if (li) li.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+function flyToEntry(id) {
+  const entry = getEntry(id);
+  const layer = layerIndex.get(id);
+  if (!entry || !layer) return;
+  selectInList(id, false);
+  if (entry.kind === 'marker') {
+    const target = L.latLng(entry.geometry[0], entry.geometry[1]);
+    map.flyTo(target, Math.max(map.getZoom(), 15), { duration: 0.9 });
+    // pulse
+    layer.setIcon(makeIcon(entry, true));
+    setTimeout(() => { const l = layerIndex.get(id); if (l) l.setIcon(makeIcon(entry, false)); }, 3200);
+    map.once('moveend', () => layer.openPopup());
+  } else {
+    map.flyToBounds(layer.getBounds().pad(0.35), { duration: 0.9, maxZoom: 17 });
+    map.once('moveend', () => layer.openPopup());
+  }
+}
+
+document.getElementById('btnFitAll').addEventListener('click', () => {
+  if (!state.entries.length) return;
+  map.flyToBounds(entriesGroup.getBounds().pad(0.15), { duration: 0.9 });
+});
+
+/* ================= Sidebar collapse ================= */
+document.getElementById('btnHide').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.add('collapsed');
+  document.body.classList.add('side-collapsed');
+  setTimeout(() => map.invalidateSize(), 280);
+});
+document.getElementById('sideToggle').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.remove('collapsed');
+  document.body.classList.remove('side-collapsed');
+  setTimeout(() => map.invalidateSize(), 280);
+});
+
+/* ================= Export / import ================= */
+function download(filename, text, mime) {
+  const blob = new Blob([text], { type: mime || 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+const stamp = () => todayStr().replace(/-/g, '');
+
+document.getElementById('btnExport').addEventListener('click', () => {
+  const payload = { app: 'hemlock-map', version: 1, exportedAt: new Date().toISOString(), entries: state.entries };
+  download(`hemlock-map-backup-${stamp()}.json`, JSON.stringify(payload, null, 2));
+});
+
+document.getElementById('btnGeo').addEventListener('click', () => {
+  const features = state.entries.map(e => ({
+    type: 'Feature',
+    properties: {
+      name: e.name, type: e.type, date: e.date, tags: e.tags || [], notes: e.notes || '', color: e.color || (TYPE_META[e.type] || TYPE_META.other).color,
+    },
+    geometry: e.kind === 'marker'
+      ? { type: 'Point', coordinates: [e.geometry[1], e.geometry[0]] }
+      : { type: 'Polygon', coordinates: [[...e.geometry.map(p => [p[1], p[0]]), [e.geometry[0][1], e.geometry[0][0]]]] },
+  }));
+  download(`hemlock-map-${stamp()}.geojson`, JSON.stringify({ type: 'FeatureCollection', features }, null, 2), 'application/geo+json');
+});
+
+const fileInput = document.getElementById('fileInput');
+let importData = null;
+document.getElementById('btnImport').addEventListener('click', () => { fileInput.value = ''; fileInput.click(); });
+fileInput.addEventListener('change', () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!data || !Array.isArray(data.entries)) throw new Error('Not a Hemlock backup file');
+      importData = data.entries.filter(e => e && e.id && e.kind && e.geometry && e.name);
+      document.getElementById('impInfo').textContent =
+        `“${f.name}” contains ${importData.length} observation${importData.length === 1 ? '' : 's'}. You currently have ${state.entries.length}. How do you want to import?`;
+      document.getElementById('impOverlay').classList.remove('hidden');
+    } catch (err) {
+      document.getElementById('impInfo').textContent = 'Could not read that file: ' + err.message;
+      importData = null;
+      document.getElementById('impOverlay').classList.remove('hidden');
+    }
+  };
+  reader.readAsText(f);
+});
+document.getElementById('impMerge').addEventListener('click', () => {
+  if (importData) {
+    const have = new Set(state.entries.map(e => e.id));
+    importData.forEach(e => { if (!have.has(e.id)) state.entries.push(e); });
+    finishImport();
+  }
+});
+document.getElementById('impReplace').addEventListener('click', () => {
+  if (importData) { state.entries = importData; finishImport(); }
+});
+function finishImport() {
+  importData = null;
+  closeOverlay('impOverlay');
+  saveState();
+  rebuildAllLayers();
+  renderList();
+  if (state.entries.length) map.flyToBounds(entriesGroup.getBounds().pad(0.15), { duration: 0.9 });
+}
+document.getElementById('impCancel').addEventListener('click', () => { importData = null; closeOverlay('impOverlay'); });
+
+/* ================= Settings ================= */
+document.getElementById('btnSettings').addEventListener('click', () => {
+  document.getElementById('sNlsKey').value = state.settings.nlsKey || '';
+  document.getElementById('setOverlay').classList.remove('hidden');
+});
+document.getElementById('setCancel').addEventListener('click', () => closeOverlay('setOverlay'));
+document.getElementById('setSave').addEventListener('click', () => {
+  state.settings.nlsKey = document.getElementById('sNlsKey').value.trim();
+  saveState();
+  applyBaseLayers(state.settings.nlsKey ? 'Maastokartta (NLS official)' : currentBaseName);
+  closeOverlay('setOverlay');
+});
+document.getElementById('sWipe').addEventListener('click', () => {
+  closeOverlay('setOverlay');
+  document.getElementById('cfmTitle').textContent = 'Delete ALL data?';
+  document.getElementById('cfmText').textContent =
+    'This wipes every marker, area and setting stored by this map in the browser. Export a Backup first if you might want it back.';
+  cfmAction = () => {
+    state.entries = [];
+    state.settings = { nlsKey: '', view: null, baseLayer: null };
+    if (storageOk) localStorage.removeItem(LS_KEY);
+    rebuildAllLayers();
+    renderList();
+  };
+  document.getElementById('cfmOverlay').classList.remove('hidden');
+});
+
+/* ================= Init ================= */
+renderList();
+/* on phone-sized screens the sidebar would cover the whole map — start collapsed */
+if (window.matchMedia('(max-width: 720px)').matches) {
+  document.getElementById('sidebar').classList.add('collapsed');
+  document.body.classList.add('side-collapsed');
+}
+</script>
+</body>
+</html>
