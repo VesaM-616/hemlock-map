@@ -432,7 +432,7 @@
     <button id="spClose" title="Close">✕</button>
   </div>
   <div class="sp-searchrow">
-    <input id="spSearch" type="text" placeholder="Species name (e.g. Angelica sylvestris)…" autocomplete="off" spellcheck="false">
+    <input id="spSearch" type="text" placeholder="Scientific or common name (e.g. chanterelle)…" autocomplete="off" spellcheck="false">
   </div>
   <ul id="spSuggest" class="hidden"></ul>
   <div id="spStatus" class="sp-status hidden"></div>
@@ -448,7 +448,7 @@
       <button id="spClear" class="sp-btn ghost">Clear</button>
     </div>
   </div>
-  <div class="sp-foot">Data: GBIF<span id="spLajiFoot"></span> · recorded occurrences, not a habitat prediction</div>
+  <div class="sp-foot">Data: GBIF · recorded occurrences, not a habitat prediction</div>
 </div>
 
 <div id="hint" class="mapbar hidden"><span id="hintText"></span><button class="ghost" id="hintCancel">✕ Cancel</button></div>
@@ -520,17 +520,7 @@
       <a href="https://omatili.maanmittauslaitos.fi/user/new/avoimet-rajapintapalvelut?lang=en" target="_blank" rel="noopener">omatili.maanmittauslaitos.fi</a>
       (choose “open interface services”). Once saved, the layer appears in the
       layer switcher in the top-right of the map. The MapAnt terrain layer works without a key.
-    </p>
-    <div class="field" style="margin-top:16px;">
-      <label>FinBIF (laji.fi) access token — optional</label>
-      <input type="password" id="sLajiToken" placeholder="Paste your laji.fi token here" autocomplete="off">
-    </div>
-    <p class="help">
-      Species Finder works out of the box using <a href="https://www.gbif.org" target="_blank" rel="noopener">GBIF</a> (no key).
-      Adding a free <a href="https://info.laji.fi/en/frontpage/api/api-laji-fi/" target="_blank" rel="noopener">FinBIF / laji.fi</a>
-      token enriches Finnish coverage. To get one, send an HTTP <code>POST</code> to
-      <code>https://api.laji.fi/v0/api-user</code> with body <code>{"email":"you@example.com"}</code> and the token is emailed to you.
-      Note: FinBIF may block direct browser requests on some hosts; if so, GBIF still covers everything.
+      Species Finder uses <a href="https://www.gbif.org" target="_blank" rel="noopener">GBIF</a> and needs no key.
     </p>
     <div class="drow" style="justify-content: space-between;">
       <button class="danger" id="sWipe">Delete all data…</button>
@@ -584,7 +574,7 @@ catch (e) { storageOk = false; document.getElementById('storageWarn').classList.
 
 const state = {
   entries: [],
-  settings: { nlsKey: '', lajiToken: '', view: null, baseLayer: null, bearing: 0 },
+  settings: { nlsKey: '', view: null, baseLayer: null, bearing: 0 },
 };
 
 function loadState() {
@@ -593,7 +583,14 @@ function loadState() {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return;
     const data = JSON.parse(raw);
-    if (Array.isArray(data.entries)) state.entries = data.entries;
+    if (Array.isArray(data.entries)) {
+      // same gate as import — a corrupt/legacy entry in storage must not reach
+      // renderList (name-sort), GeoJSON export or the layer builders
+      const before = data.entries.length;
+      state.entries = data.entries.filter(isValidEntry);
+      const dropped = before - state.entries.length;
+      if (dropped) console.warn('Dropped ' + dropped + ' invalid entr' + (dropped === 1 ? 'y' : 'ies') + ' from storage');
+    }
     if (data.settings) Object.assign(state.settings, data.settings);
   } catch (e) { console.warn('Could not load saved data', e); }
 }
@@ -869,9 +866,11 @@ let pending = null;         // { kind, geometry }
 function showHint(text) { hintText.textContent = text; hint.classList.remove('hidden'); }
 function hideHint() { hint.classList.add('hidden'); }
 
+const DRAWING_TOOLS = ['marker', 'polygon', 'paint'];
 function setToolButtons() {
+  // only the drawing tools track activeTool; locate/species manage their own .active
   document.querySelectorAll('.toolbox button').forEach(b => {
-    b.classList.toggle('active', b.dataset.tool === activeTool);
+    if (DRAWING_TOOLS.includes(b.dataset.tool)) b.classList.toggle('active', b.dataset.tool === activeTool);
   });
 }
 
@@ -1422,7 +1421,12 @@ function endShapeEdit(save) {
       layer.setLatLngs(backup);
     }
   }
-  if (save) { entry.updatedAt = new Date().toISOString(); saveState(); }
+  if (save) {
+    entry.updatedAt = new Date().toISOString();
+    // if we're actively guiding to this entry, follow it to its new position
+    if (guide.targetId === id) { guide.target = entryTargetLatLng(entry); renderGuideArrow(); }
+    saveState();
+  }
   renderList();
 }
 document.getElementById('shapeSave').addEventListener('click', () => endShapeEdit(true));
@@ -1471,11 +1475,12 @@ function openForm(ctx) {
   } else {
     document.getElementById('formTitle').textContent = pending && pending.kind === 'area' ? 'New area' : 'New marker';
     fName.value = (pending && pending.prefillName) || '';
-    setType('plant');
+    const initType = (pending && pending.prefillType) || 'plant';
+    setType(initType);
     fDate.value = todayStr();
     fTags.value = '';
     fNotes.value = (pending && pending.prefillNotes) || '';
-    fColor.value = TYPE_META.plant.color;
+    fColor.value = TYPE_META[initType].color;
   }
   formOverlay.classList.remove('hidden');
   setTimeout(() => fName.focus(), 50);
@@ -1777,15 +1782,16 @@ document.getElementById('impCancel').addEventListener('click', () => { importDat
 /* ================= Settings ================= */
 document.getElementById('btnSettings').addEventListener('click', () => {
   document.getElementById('sNlsKey').value = state.settings.nlsKey || '';
-  document.getElementById('sLajiToken').value = state.settings.lajiToken || '';
   document.getElementById('setOverlay').classList.remove('hidden');
 });
 document.getElementById('setCancel').addEventListener('click', () => closeOverlay('setOverlay'));
 document.getElementById('setSave').addEventListener('click', () => {
+  const hadKey = !!state.settings.nlsKey;
   state.settings.nlsKey = document.getElementById('sNlsKey').value.trim();
-  state.settings.lajiToken = document.getElementById('sLajiToken').value.trim();
   saveState();
-  applyBaseLayers(state.settings.nlsKey ? 'Maastokartta (NLS official)' : currentBaseName);
+  // only jump to the NLS layer the moment the key is first added — otherwise keep
+  // the user's current base map (a later re-save shouldn't hijack it)
+  applyBaseLayers(!hadKey && state.settings.nlsKey ? 'Maastokartta (NLS official)' : currentBaseName);
   closeOverlay('setOverlay');
 });
 document.getElementById('sWipe').addEventListener('click', () => {
@@ -1798,7 +1804,7 @@ document.getElementById('sWipe').addEventListener('click', () => {
     if (map.setBearing) map.setBearing(0);
     if (typeof spClearLayers === 'function') spClearLayers();
     state.entries = [];
-    state.settings = { nlsKey: '', lajiToken: '', view: null, baseLayer: null, bearing: 0 };
+    state.settings = { nlsKey: '', view: null, baseLayer: null, bearing: 0 };
     if (storageOk) localStorage.removeItem(LS_KEY);
     rebuildAllLayers();
     renderList();
@@ -1806,14 +1812,14 @@ document.getElementById('sWipe').addEventListener('click', () => {
   document.getElementById('cfmOverlay').classList.remove('hidden');
 });
 
-/* ================= Species Finder (GBIF + optional FinBIF) ================= */
+/* ================= Species Finder (GBIF) ================= */
 const GBIF = 'https://api.gbif.org/v1';
 const OCC_TARGET = 600;      // how many occurrence points to pull for the heat/point view
 const OCC_PAGE = 300;        // GBIF max page size
 const HOTSPOT_RADIUS_M = 3000; // window used to recount the densest neighbourhood
 
 const sp = {
-  open: false, taxonKey: null, name: '', points: [],
+  open: false, taxonKey: null, name: '', kingdom: null, points: [],
   heatLayer: null, pointLayer: null, hotspotLayer: null,
   hotspot: null, suggestSeq: 0, fetchSeq: 0, activeSuggest: -1, suggestions: [],
 };
@@ -1845,18 +1851,41 @@ function spStatus(msg) {
 }
 function spClearSuggest() { spEl.suggest.innerHTML = ''; spEl.suggest.classList.add('hidden'); sp.activeSuggest = -1; sp.suggestions = []; }
 
-/* --- Autocomplete via GBIF species suggest (scientific + common names) --- */
+/* pick the most relevant vernacular name from a GBIF vernacularNames array:
+   prefer one containing the typed query, else an English one, else the first */
+function pickVernacular(arr, q) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  const ql = q.toLowerCase();
+  const hit = arr.find(v => v.vernacularName && v.vernacularName.toLowerCase().includes(ql));
+  const eng = arr.find(v => v.language === 'eng' && v.vernacularName);
+  return (hit || eng || arr[0]).vernacularName || null;
+}
+
+/* --- Autocomplete: GBIF suggest (scientific prefix) + search (common names),
+   merged. Occurrence lookup needs a backbone key, so resolve nubKey || key. --- */
 async function spRunSuggest() {
   const q = spEl.search.value.trim();
   if (q.length < 3) { spClearSuggest(); return; }
   const token = ++sp.suggestSeq;
   try {
-    const url = GBIF + '/species/suggest?limit=8&q=' + encodeURIComponent(q);
-    const rs = await (await fetch(url)).json();
+    const [suggestRes, searchRes] = await Promise.all([
+      fetch(GBIF + '/species/suggest?limit=8&q=' + encodeURIComponent(q)).then(r => r.json()).catch(() => []),
+      fetch(GBIF + '/species/search?limit=15&status=ACCEPTED&q=' + encodeURIComponent(q)).then(r => r.json()).catch(() => ({})),
+    ]);
     if (token !== sp.suggestSeq) return;
-    // keep species/genus ranks with a usable key; de-dup by canonicalName
+    const merged = [];
     const seen = new Set();
-    const list = (rs || []).filter(r => r.key && r.canonicalName && !seen.has(r.canonicalName) && seen.add(r.canonicalName)).slice(0, 8);
+    const add = (key, canonicalName, kingdom, vernacular, rank) => {
+      if (!key || !canonicalName || seen.has(key)) return;
+      seen.add(key);
+      merged.push({ key, canonicalName, kingdom: kingdom || null, vernacularName: vernacular || null, rank: rank || null });
+    };
+    // scientific-prefix matches first (backbone keys already)
+    (suggestRes || []).forEach(r => add(r.key, r.canonicalName, r.kingdom, r.vernacularName, r.rank));
+    // then common-name matches (checklist hits carry nubKey → the backbone taxon)
+    ((searchRes && searchRes.results) || []).forEach(r =>
+      add(r.nubKey || r.key, r.canonicalName || r.scientificName, r.kingdom, pickVernacular(r.vernacularNames, q), r.rank));
+    const list = merged.slice(0, 8);
     sp.suggestions = list;
     if (!list.length) { spEl.suggest.innerHTML = '<li class="sp-note">No matching species.</li>'; spEl.suggest.classList.remove('hidden'); return; }
     spEl.suggest.innerHTML = list.map((r, i) =>
@@ -1876,10 +1905,17 @@ function spPick(rec) {
   spEl.search.value = rec.canonicalName;
   sp.taxonKey = rec.key;
   sp.name = rec.canonicalName;
+  sp.kingdom = rec.kingdom || null;
   spFetchOccurrences();
 }
+/* GBIF kingdom → this app's marker type */
+function kingdomToType(k) {
+  if (k === 'Fungi') return 'fungus';
+  if (k === 'Plantae') return 'plant';
+  return 'other'; // Animalia (birds, insects) and everything else
+}
 
-/* --- Fetch occurrences from GBIF (+ FinBIF if token set) --- */
+/* --- Fetch occurrences from GBIF --- */
 async function spFetchOccurrences() {
   const token = ++sp.fetchSeq;
   spClearLayers();
@@ -1904,16 +1940,6 @@ async function spFetchOccurrences() {
       // stop on empty page too, so a degenerate response can't page hundreds of times
       if (!batch.length || d.endOfRecords || offset >= (d.count || 0) || offset >= 100000) break;
     }
-    // Optional FinBIF enrichment
-    let lajiNote = '';
-    if (state.settings.lajiToken) {
-      try {
-        const lajiPts = await spFetchFinBIF(sp.name, token);
-        if (token !== sp.fetchSeq) return;
-        if (lajiPts && lajiPts.length) { pts.push(...lajiPts); lajiNote = ' + FinBIF'; }
-      } catch (e) { lajiNote = ''; /* CORS or auth — silently fall back to GBIF */ }
-    }
-    document.getElementById('spLajiFoot').textContent = lajiNote;
 
     if (token !== sp.fetchSeq) return;
     sp.points = pts;
@@ -1925,25 +1951,6 @@ async function spFetchOccurrences() {
   } catch (e) {
     if (token === sp.fetchSeq) spStatus('Search failed — GBIF may be unreachable right now.');
   }
-}
-
-/* FinBIF/laji.fi warehouse query — best-effort; may be blocked by CORS on some hosts */
-async function spFetchFinBIF(name, token) {
-  // token goes in the Authorization header only — never in the URL, where it would
-  // leak via browser history, Referer headers and server logs
-  const url = 'https://api.laji.fi/v0/warehouse/query/unit/list?' +
-    'taxonName=' + encodeURIComponent(name) +
-    '&onlyCount=false&pageSize=300&featureType=ORIGINAL_FEATURE';
-  const d = await (await fetch(url, { headers: { Authorization: 'Bearer ' + state.settings.lajiToken } })).json();
-  if (token !== sp.fetchSeq) return [];
-  const out = [];
-  (d.results || []).forEach(u => {
-    const g = u.gathering && u.gathering.conversions && u.gathering.conversions.wgs84CenterPoint;
-    if (g && Number.isFinite(g.lat) && Number.isFinite(g.lon)) {
-      out.push({ lat: g.lat, lng: g.lon, date: (u.gathering && u.gathering.eventDate && u.gathering.eventDate.begin) || null, key: u.unit && u.unit.unitId, src: 'FinBIF', dataset: '' });
-    }
-  });
-  return out;
 }
 
 function spRenderResult(total) {
@@ -2044,8 +2051,9 @@ function spSaveHotspot(h) {
     kind: 'marker',
     geometry: [h.lat, h.lng],
     prefillName: sp.name,
-    prefillNotes: 'Species Finder hotspot — ' + h.n + ' recorded occurrences nearby (GBIF' +
-      (state.settings.lajiToken ? '/FinBIF' : '') + '). Recorded sightings, not a habitat guarantee.',
+    prefillType: kingdomToType(sp.kingdom),
+    prefillNotes: 'Species Finder hotspot — ' + h.n + ' recorded occurrences nearby (GBIF). ' +
+      'Recorded sightings, not a habitat guarantee.',
   };
   openForm({ mode: 'create' });
 }
@@ -2054,7 +2062,6 @@ document.getElementById('spClose').addEventListener('click', () => setSpeciesPan
 document.getElementById('spClear').addEventListener('click', () => {
   spClearLayers(); spClearSuggest(); spStatus('');
   spEl.result.classList.add('hidden'); spEl.search.value = ''; sp.points = []; sp.taxonKey = null;
-  document.getElementById('spLajiFoot').textContent = '';
 });
 
 let spSuggestT = null;
@@ -2075,6 +2082,7 @@ function spHighlight(items) { items.forEach((li, i) => li.classList.toggle('acti
 window._spDebugPoints = () => sp.points.length;
 window._spDebugFirstPoint = () => sp.points[0] || null;
 window._spHotspot = () => sp.hotspot;
+window._spTaxonKey = () => sp.taxonKey;
 
 /* ================= Init ================= */
 renderList();
