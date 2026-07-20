@@ -274,6 +274,11 @@
   }
 
   .mapbar.bottom { top: auto; bottom: 20px; }
+  #toast { bottom: 74px; }
+  .garrow {
+    display: inline-block; font-size: 1.05rem; line-height: 1;
+    transition: transform .4s ease; will-change: transform;
+  }
 
   /* ---------- Touch optimisations (no effect on mouse/desktop) ---------- */
   body { -webkit-tap-highlight-color: transparent; }
@@ -342,6 +347,11 @@
 
 <div id="hint" class="mapbar hidden"><span id="hintText"></span><button class="ghost" id="hintCancel">✕ Cancel</button></div>
 <div id="toast" class="mapbar bottom hidden"><span id="toastText"></span></div>
+<div id="guideBar" class="mapbar bottom hidden">
+  <span id="guideArrow" class="garrow">➤</span>
+  <span id="guideText"></span>
+  <button class="ghost" id="guideStop">✕ Stop</button>
+</div>
 <div id="shapeBar" class="mapbar hidden">
   <span id="shapeBarText">Editing shape — drag the points</span>
   <button id="shapeSave">Save</button>
@@ -606,6 +616,10 @@ function makePopupNode(entry) {
     ${entry.tags && entry.tags.length ? `<div class="pop-tags">🏷 ${esc(entry.tags.join(', '))}</div>` : ''}
     ${entry.notes ? `<div class="pop-notes">${esc(entry.notes)}</div>` : ''}
     <div class="pop-actions">
+      <button data-act="guide">🧭 Guide</button>
+      <button data-act="dirs">🚗 Maps</button>
+    </div>
+    <div class="pop-actions">
       <button data-act="edit">✎ Edit</button>
       <button data-act="shape">${entry.kind === 'marker' ? '✥ Move' : '⬡ Reshape'}</button>
       <button data-act="del" class="danger">🗑</button>
@@ -617,6 +631,8 @@ function makePopupNode(entry) {
     if (btn.dataset.act === 'edit') openForm({ mode: 'edit', id: entry.id });
     else if (btn.dataset.act === 'del') confirmDelete(entry.id);
     else if (btn.dataset.act === 'shape') startShapeEdit(entry.id);
+    else if (btn.dataset.act === 'guide') startGuide(entryTargetLatLng(entry), entry.name, entry.id);
+    else if (btn.dataset.act === 'dirs') { const t = entryTargetLatLng(entry); openDirections(t.lat, t.lng); }
   });
   return div;
 }
@@ -870,6 +886,78 @@ function locateMe() {
   }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 });
 }
 
+/* --- Navigation: external directions + straight-line guide mode --- */
+function openDirections(lat, lng) {
+  window.open('https://www.google.com/maps/dir/?api=1&destination=' + lat.toFixed(6) + ',' + lng.toFixed(6), '_blank', 'noopener');
+}
+
+function entryTargetLatLng(entry) {
+  if (entry.kind === 'marker') return L.latLng(entry.geometry[0], entry.geometry[1]);
+  const layer = layerIndex.get(entry.id);
+  return layer ? layer.getBounds().getCenter() : L.latLng(entry.geometry[0][0], entry.geometry[0][1]);
+}
+
+function bearingDeg(from, to) {
+  const f1 = from.lat * Math.PI / 180, f2 = to.lat * Math.PI / 180;
+  const dl = (to.lng - from.lng) * Math.PI / 180;
+  const y = Math.sin(dl) * Math.cos(f2);
+  const x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+const CARDINALS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const cardinal = b => CARDINALS[Math.round(b / 22.5) % 16];
+const fmtDist = m => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(m < 10000 ? 2 : 1) + ' km';
+
+const guide = { watchId: null, targetId: null, target: null, label: '', line: null, dot: null, ring: null };
+
+function startGuide(target, label, targetId) {
+  if (!('geolocation' in navigator)) { toast('This browser has no location support'); return; }
+  stopGuide();
+  guide.target = target;
+  guide.label = label.length > 20 ? label.slice(0, 19) + '…' : label;
+  guide.targetId = targetId || null;
+  document.getElementById('guideBar').classList.remove('hidden');
+  document.getElementById('guideText').textContent = 'Waiting for GPS…';
+  document.getElementById('guideArrow').style.transform = '';
+  let first = true;
+  guide.watchId = navigator.geolocation.watchPosition(pos => {
+    if (guide.watchId === null) return;
+    const here = L.latLng(pos.coords.latitude, pos.coords.longitude);
+    const acc = pos.coords.accuracy || 0;
+    const d = here.distanceTo(guide.target);
+    const b = bearingDeg(here, guide.target);
+    if (!guide.dot) {
+      guide.ring = L.circle(here, { radius: Math.max(acc, 5), color: '#1a73e8', weight: 1, fillColor: '#1a73e8', fillOpacity: 0.12 }).addTo(map);
+      guide.dot = L.circleMarker(here, { radius: 7, color: '#fff', weight: 2.5, fillColor: '#1a73e8', fillOpacity: 1 }).addTo(map);
+      guide.line = L.polyline([here, guide.target], { color: '#1a73e8', weight: 3, dashArray: '6 8', opacity: 0.85 }).addTo(map);
+    } else {
+      guide.ring.setLatLng(here).setRadius(Math.max(acc, 5));
+      guide.dot.setLatLng(here);
+      guide.line.setLatLngs([here, guide.target]);
+    }
+    document.getElementById('guideArrow').style.transform = 'rotate(' + (b - 90) + 'deg)';
+    document.getElementById('guideText').textContent =
+      d <= 15 ? guide.label + ' — you have arrived! 🎉'
+              : guide.label + ' · ' + fmtDist(d) + ' · ' + cardinal(b);
+    if (first) {
+      first = false;
+      map.flyToBounds(L.latLngBounds([here, guide.target]).pad(0.25), { duration: 0.9, maxZoom: 17 });
+    }
+  }, err => {
+    toast(err.code === 1 ? 'Location permission was denied' : 'Could not get a GPS fix', 3500);
+    stopGuide();
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 2000 });
+}
+
+function stopGuide() {
+  if (guide.watchId !== null && navigator.geolocation) navigator.geolocation.clearWatch(guide.watchId);
+  guide.watchId = null; guide.targetId = null; guide.target = null;
+  [guide.line, guide.dot, guide.ring].forEach(l => { if (l) map.removeLayer(l); });
+  guide.line = guide.dot = guide.ring = null;
+  document.getElementById('guideBar').classList.add('hidden');
+}
+document.getElementById('guideStop').addEventListener('click', () => stopGuide());
+
 /* --- Toolbox control --- */
 const Toolbox = L.Control.extend({
   options: { position: 'topleft' },
@@ -900,6 +988,8 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (!document.getElementById('formOverlay').classList.contains('hidden')) closeForm();
     else if (shapeEdit.id) endShapeEdit(false);
+    else if (activeTool) cancelTool();
+    else if (guide.watchId !== null) stopGuide();
     else cancelTool();
     closeOverlay('setOverlay'); closeOverlay('impOverlay'); closeOverlay('cfmOverlay');
   }
@@ -927,6 +1017,10 @@ function dropSearchPin(lat, lng, label) {
     <div class="pop-name">${esc(label)}</div>
     <div class="pop-meta">${lat.toFixed(5)}, ${lng.toFixed(5)}</div>
     <div class="pop-actions">
+      <button data-act="guide">🧭 Guide</button>
+      <button data-act="dirs">🚗 Maps</button>
+    </div>
+    <div class="pop-actions">
       <button data-act="save">➕ Save as marker</button>
       <button data-act="remove">✕ Remove</button>
     </div>`;
@@ -934,6 +1028,8 @@ function dropSearchPin(lat, lng, label) {
     const b = ev.target.closest('button[data-act]');
     if (!b) return;
     map.closePopup();
+    if (b.dataset.act === 'guide') { startGuide(L.latLng(lat, lng), label === 'Coordinates' ? 'Search point' : label); return; }
+    if (b.dataset.act === 'dirs') { openDirections(lat, lng); return; }
     if (b.dataset.act === 'save') {
       pending = { kind: 'marker', geometry: [lat, lng], prefillName: label === 'Coordinates' ? '' : label };
       removeSearchPin();
@@ -1169,6 +1265,7 @@ function confirmDelete(id) {
   document.getElementById('cfmTitle').textContent = 'Delete “' + entry.name + '”?';
   document.getElementById('cfmText').textContent = 'This removes the ' + (entry.kind === 'marker' ? 'marker' : 'area') + ' from the map and the index. A Backup file is the only way to get it back.';
   cfmAction = () => {
+    if (guide.targetId === id) stopGuide();
     state.entries = state.entries.filter(e => e.id !== id);
     removeEntryLayer(id);
     saveState();
@@ -1428,6 +1525,7 @@ document.getElementById('sWipe').addEventListener('click', () => {
   document.getElementById('cfmText').textContent =
     'This wipes every marker, area and setting stored by this map in the browser. Export a Backup first if you might want it back.';
   cfmAction = () => {
+    stopGuide();
     state.entries = [];
     state.settings = { nlsKey: '', view: null, baseLayer: null };
     if (storageOk) localStorage.removeItem(LS_KEY);
