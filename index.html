@@ -492,10 +492,17 @@ function loadState() {
     if (data.settings) Object.assign(state.settings, data.settings);
   } catch (e) { console.warn('Could not load saved data', e); }
 }
+let lastSaveWarn = 0;
 function saveState() {
   if (!storageOk) return;
   try { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
-  catch (e) { console.warn('Could not save', e); }
+  catch (e) {
+    console.warn('Could not save', e);
+    if (Date.now() - lastSaveWarn > 30000) { // don't nag on every keystroke
+      lastSaveWarn = Date.now();
+      toast('⚠ Saving failed — browser storage may be full. Export a Backup now!', 6000);
+    }
+  }
 }
 loadState();
 
@@ -505,6 +512,14 @@ const TYPE_META = {
   fungus: { emoji: '🍄', label: 'Fungus', color: '#b7791f' },
   other:  { emoji: '❖',  label: 'Other',  color: '#6b46c1' },
 };
+/* tunables — grep for these instead of hunting magic numbers */
+const ARRIVE_M = 15;              // guide: distance (m) that counts as arrival
+const MIN_HEADING_SPEED = 0.4;    // m/s of GPS movement before the course is trusted
+const GPS_HEADING_TTL_MS = 10000; // GPS course is forgotten after this long standing still
+const POPUP_FLY_FALLBACK_MS = 1300;
+const MOBILE_BP_PX = 720;         // keep in sync with the CSS media queries
+const ENTRY_FLY_ZOOM = 15, LOCATE_ZOOM = 16, FIT_MAX_ZOOM = 17, SEARCH_ZOOM = 13;
+
 const uid = () => 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const todayStr = () => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); };
@@ -513,6 +528,15 @@ const fmtDate = iso => {
   const [y, m, d] = iso.split('-');
   return `${parseInt(d)}.${parseInt(m)}.${y}`;
 };
+/* strict shape check — a malformed backup must never reach the map layer builders,
+   because a bad persisted entry would crash the app at every startup */
+function isValidEntry(e) {
+  if (!e || !e.id || !e.name || (e.kind !== 'marker' && e.kind !== 'area')) return false;
+  const g = e.geometry;
+  if (e.kind === 'marker') return Array.isArray(g) && g.length === 2 && g.every(Number.isFinite);
+  return Array.isArray(g) && g.length >= 3 && g.every(p => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite));
+}
+
 function parseTags(str) {
   const seen = new Set(); const out = [];
   String(str || '').split(',').map(t => t.trim()).filter(Boolean).forEach(t => {
@@ -624,6 +648,38 @@ function makeIcon(entry, pulse) {
   });
 }
 
+/* shared popup click-delegation: every popup closes itself, then runs the action */
+function wirePopupActions(div, handlers) {
+  div.addEventListener('click', ev => {
+    const btn = ev.target.closest('button[data-act]');
+    if (!btn) return;
+    map.closePopup();
+    const fn = handlers[btn.dataset.act];
+    if (fn) fn();
+  });
+}
+
+/* shared GPS accuracy circle style (locate + guide) */
+function makeAccuracyRing(latlng, acc) {
+  return L.circle(latlng, { radius: Math.max(acc || 0, 5), color: '#1a73e8', weight: 1, fillColor: '#1a73e8', fillOpacity: 0.12 });
+}
+
+/* opening a Leaflet popup mid-fly-animation silently fails — open once the flight
+   lands, with a timeout fallback. getLayer() re-resolves so a layer deleted or
+   replaced mid-flight is skipped instead of crashing. */
+function openPopupAfterFly(getLayer) {
+  let opened = false;
+  const openIt = () => {
+    if (opened) return;
+    const l = getLayer();
+    if (!l) return;
+    opened = true;
+    l.openPopup();
+  };
+  map.once('moveend', openIt);
+  setTimeout(openIt, POPUP_FLY_FALLBACK_MS);
+}
+
 function makePopupNode(entry) {
   const meta = TYPE_META[entry.type] || TYPE_META.other;
   const color = entry.color || meta.color;
@@ -644,15 +700,12 @@ function makePopupNode(entry) {
       <button data-act="shape">${entry.kind === 'marker' ? '✥ Move' : '⬡ Reshape'}</button>
       <button data-act="del" class="danger">🗑</button>
     </div>`;
-  div.addEventListener('click', ev => {
-    const btn = ev.target.closest('button[data-act]');
-    if (!btn) return;
-    map.closePopup();
-    if (btn.dataset.act === 'edit') openForm({ mode: 'edit', id: entry.id });
-    else if (btn.dataset.act === 'del') confirmDelete(entry.id);
-    else if (btn.dataset.act === 'shape') startShapeEdit(entry.id);
-    else if (btn.dataset.act === 'guide') startGuide(entryTargetLatLng(entry), entry.name, entry.id);
-    else if (btn.dataset.act === 'dirs') { const t = entryTargetLatLng(entry); openDirections(t.lat, t.lng); }
+  wirePopupActions(div, {
+    edit: () => openForm({ mode: 'edit', id: entry.id }),
+    del: () => confirmDelete(entry.id),
+    shape: () => startShapeEdit(entry.id),
+    guide: () => startGuide(entryTargetLatLng(entry), entry.name, entry.id),
+    dirs: () => { const t = entryTargetLatLng(entry); openDirections(t.lat, t.lng); },
   });
   return div;
 }
@@ -692,7 +745,10 @@ function removeEntryLayer(id) {
 function rebuildAllLayers() {
   entriesGroup.clearLayers();
   layerIndex.clear();
-  state.entries.forEach(addEntryLayer);
+  state.entries.forEach(e => {
+    try { addEntryLayer(e); }
+    catch (err) { console.warn('Skipped entry that could not be drawn:', e && e.id, err); }
+  });
 }
 rebuildAllLayers();
 
@@ -755,7 +811,9 @@ function startPolygonTool() {
   setToolButtons();
 }
 /* robust finish: leaflet.draw's own dblclick finish needs a precise hit on the last
-   vertex icon, which is unreliable when the map is rotated — finish on any dblclick */
+   vertex icon, which is unreliable when the map is rotated — finish on any dblclick.
+   NOTE: _finishShape() is a PRIVATE leaflet.draw API, pinned to 1.0.4 — re-test
+   the rotated-polygon flow before ever bumping that version. */
 map.on('dblclick', () => {
   if (activeTool === 'polygon' && activeDrawHandler && activeDrawHandler._markers && activeDrawHandler._markers.length >= 3) {
     activeDrawHandler._finishShape();
@@ -876,7 +934,7 @@ function toastHide() { document.getElementById('toast').classList.add('hidden');
 
 /* --- Position marker with heading cone (compass or GPS course) --- */
 const posMarkers = new Set();
-let gpsHeading = null;
+let gpsHeading = null, gpsHeadingAt = 0;
 const compass = { requested: false, heading: null };
 
 function makePosMarker(latlng, interactive) {
@@ -892,7 +950,9 @@ function makePosMarker(latlng, interactive) {
   return m;
 }
 function updateHeadingCones() {
-  const h = compass.heading != null ? compass.heading : gpsHeading;
+  /* GPS course goes stale when you stop walking — forget it after a while */
+  const freshGps = (Date.now() - gpsHeadingAt < GPS_HEADING_TTL_MS) ? gpsHeading : null;
+  const h = compass.heading != null ? compass.heading : freshGps;
   posMarkers.forEach(m => {
     const el = m.getElement && m.getElement();
     if (!el) return;
@@ -912,7 +972,9 @@ function onOrient(e) {
   updateHeadingCones();
 }
 function enableCompass() {
-  /* must be called from a user gesture — iOS requires an explicit permission prompt */
+  /* must be called from a user gesture — iOS requires an explicit permission prompt.
+     The orientation listener is intentionally kept for the whole session (one cheap
+     listener; removing/re-adding would re-trigger the iOS permission dance). */
   if (compass.requested) return;
   compass.requested = true;
   const attach = () => {
@@ -924,8 +986,9 @@ function enableCompass() {
   } else attach();
 }
 function noteGpsHeading(coords) {
-  if (typeof coords.heading === 'number' && isFinite(coords.heading) && (coords.speed || 0) > 0.4) {
+  if (typeof coords.heading === 'number' && isFinite(coords.heading) && (coords.speed || 0) > MIN_HEADING_SPEED) {
     gpsHeading = coords.heading;
+    gpsHeadingAt = Date.now();
   }
   updateHeadingCones();
 }
@@ -943,7 +1006,7 @@ function locateMe() {
     const acc = Math.round(pos.coords.accuracy || 0);
     removeGeoLayer();
     noteGpsHeading(pos.coords);
-    const ring = L.circle([lat, lng], { radius: Math.max(acc, 5), color: '#1a73e8', weight: 1, fillColor: '#1a73e8', fillOpacity: 0.12 });
+    const ring = makeAccuracyRing([lat, lng], acc);
     const dot = makePosMarker([lat, lng], true);
     geoLayer = L.featureGroup([ring, dot]).addTo(map);
     const div = document.createElement('div');
@@ -955,21 +1018,13 @@ function locateMe() {
         <button data-act="mark">➕ Mark this spot</button>
         <button data-act="remove">✕ Remove</button>
       </div>`;
-    div.addEventListener('click', ev => {
-      const b = ev.target.closest('button[data-act]');
-      if (!b) return;
-      map.closePopup();
-      if (b.dataset.act === 'mark') {
-        pending = { kind: 'marker', geometry: [lat, lng] };
-        openForm({ mode: 'create' });
-      } else removeGeoLayer();
+    wirePopupActions(div, {
+      mark: () => { pending = { kind: 'marker', geometry: [lat, lng] }; openForm({ mode: 'create' }); },
+      remove: () => removeGeoLayer(),
     });
     dot.bindPopup(div, { maxWidth: 280 });
-    map.flyTo([lat, lng], Math.max(map.getZoom(), 16), { duration: 0.9 });
-    let opened = false;
-    const openIt = () => { if (!opened && geoLayer) { opened = true; dot.openPopup(); } };
-    map.once('moveend', openIt);
-    setTimeout(openIt, 1300);
+    map.flyTo([lat, lng], Math.max(map.getZoom(), LOCATE_ZOOM), { duration: 0.9 });
+    openPopupAfterFly(() => (geoLayer ? dot : null));
   }, err => {
     toast(err.code === 1 ? 'Location permission was denied' : 'Could not get a location fix', 3500);
   }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 });
@@ -1024,7 +1079,7 @@ function startGuide(target, label, targetId) {
     const b = bearingDeg(here, guide.target);
     noteGpsHeading(pos.coords);
     if (!guide.dot) {
-      guide.ring = L.circle(here, { radius: Math.max(acc, 5), color: '#1a73e8', weight: 1, fillColor: '#1a73e8', fillOpacity: 0.12 }).addTo(map);
+      guide.ring = makeAccuracyRing(here, acc).addTo(map);
       guide.dot = makePosMarker(here, false).addTo(map);
       guide.line = L.polyline([here, guide.target], { color: '#1a73e8', weight: 3, dashArray: '6 8', opacity: 0.85 }).addTo(map);
     } else {
@@ -1035,11 +1090,11 @@ function startGuide(target, label, targetId) {
     guide.lastWorldBearing = b;
     renderGuideArrow();
     document.getElementById('guideText').textContent =
-      d <= 15 ? guide.label + ' — you have arrived! 🎉'
-              : guide.label + ' · ' + fmtDist(d) + ' · ' + cardinal(b);
+      d <= ARRIVE_M ? guide.label + ' — you have arrived! 🎉'
+                    : guide.label + ' · ' + fmtDist(d) + ' · ' + cardinal(b);
     if (first) {
       first = false;
-      map.flyToBounds(L.latLngBounds([here, guide.target]).pad(0.25), { duration: 0.9, maxZoom: 17 });
+      map.flyToBounds(L.latLngBounds([here, guide.target]).pad(0.25), { duration: 0.9, maxZoom: FIT_MAX_ZOOM });
     }
   }, err => {
     toast(err.code === 1 ? 'Location permission was denied' : 'Could not get a GPS fix', 3500);
@@ -1133,31 +1188,19 @@ function dropSearchPin(lat, lng, label) {
       <button data-act="save">➕ Save as marker</button>
       <button data-act="remove">✕ Remove</button>
     </div>`;
-  div.addEventListener('click', ev => {
-    const b = ev.target.closest('button[data-act]');
-    if (!b) return;
-    map.closePopup();
-    if (b.dataset.act === 'guide') { startGuide(L.latLng(lat, lng), label === 'Coordinates' ? 'Search point' : label); return; }
-    if (b.dataset.act === 'dirs') { openDirections(lat, lng); return; }
-    if (b.dataset.act === 'save') {
+  wirePopupActions(div, {
+    guide: () => startGuide(L.latLng(lat, lng), label === 'Coordinates' ? 'Search point' : label),
+    dirs: () => openDirections(lat, lng),
+    save: () => {
       pending = { kind: 'marker', geometry: [lat, lng], prefillName: label === 'Coordinates' ? '' : label };
       removeSearchPin();
       openForm({ mode: 'create' });
-    } else {
-      removeSearchPin();
-    }
+    },
+    remove: () => removeSearchPin(),
   });
   searchPin.bindPopup(div, { maxWidth: 280 });
-  // open after any fly animation lands (opening mid-animation can silently fail)
   const pinRef = searchPin;
-  let opened = false;
-  const openIt = () => {
-    if (opened || searchPin !== pinRef) return;
-    opened = true;
-    pinRef.openPopup();
-  };
-  map.once('moveend', openIt);
-  setTimeout(openIt, 1300);
+  openPopupAfterFly(() => (searchPin === pinRef ? pinRef : null));
 }
 
 /* Accepts "64.5, 26.0" · "64,5 26,0" · "N 64.5 E 26.0" · "64.5° N, 26.0° E" */
@@ -1175,13 +1218,15 @@ function parseCoordQuery(q) {
   return [lat, lng];
 }
 
+let searchSeq = 0; // guards against a slow older response overwriting a newer one
 async function runPlaceSearch() {
   const q = psInput.value.trim();
   if (!q) return;
+  const token = ++searchSeq;
   clearSearchResults();
   const c = parseCoordQuery(q);
   if (c) {
-    map.flyTo(c, Math.max(map.getZoom(), 13), { duration: 0.9 });
+    map.flyTo(c, Math.max(map.getZoom(), SEARCH_ZOOM), { duration: 0.9 });
     dropSearchPin(c[0], c[1], 'Coordinates');
     return;
   }
@@ -1190,7 +1235,9 @@ async function runPlaceSearch() {
   try {
     const base = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&accept-language=fi&q=' + encodeURIComponent(q);
     let rs = await (await fetch(base + '&countrycodes=fi')).json();
+    if (token !== searchSeq) return; // a newer search took over
     if (!rs.length) rs = await (await fetch(base)).json();  // fall back to worldwide
+    if (token !== searchSeq) return;
     if (!rs.length) { psResults.innerHTML = '<li class="sr-note">No results found.</li>'; return; }
     psResults.innerHTML = rs.map((r, i) => {
       const parts = r.display_name.split(',').map(s => s.trim());
@@ -1208,7 +1255,7 @@ async function runPlaceSearch() {
           const bb = r.boundingbox.map(Number);
           map.flyToBounds([[bb[0], bb[2]], [bb[1], bb[3]]], { duration: 0.9, maxZoom: 15 });
         } else {
-          map.flyTo([lat, lon], 13, { duration: 0.9 });
+          map.flyTo([lat, lon], SEARCH_ZOOM, { duration: 0.9 });
         }
         dropSearchPin(lat, lon, r.display_name.split(',')[0]);
       });
@@ -1406,7 +1453,8 @@ document.getElementById('typeChips').addEventListener('click', e => {
   document.querySelectorAll('#typeChips .chip').forEach(c => c.classList.toggle('on', c === chip));
   renderList();
 });
-searchEl.addEventListener('input', renderList);
+let searchDebT = null; // debounce: full list re-render per keystroke is wasteful
+searchEl.addEventListener('input', () => { clearTimeout(searchDebT); searchDebT = setTimeout(renderList, 150); });
 sortEl.addEventListener('change', renderList);
 
 function allTags() {
@@ -1516,15 +1564,14 @@ function flyToEntry(id) {
   selectInList(id, false);
   if (entry.kind === 'marker') {
     const target = L.latLng(entry.geometry[0], entry.geometry[1]);
-    map.flyTo(target, Math.max(map.getZoom(), 15), { duration: 0.9 });
+    map.flyTo(target, Math.max(map.getZoom(), ENTRY_FLY_ZOOM), { duration: 0.9 });
     // pulse
     layer.setIcon(makeIcon(entry, true));
     setTimeout(() => { const l = layerIndex.get(id); if (l) l.setIcon(makeIcon(entry, false)); }, 3200);
-    map.once('moveend', () => layer.openPopup());
   } else {
-    map.flyToBounds(layer.getBounds().pad(0.35), { duration: 0.9, maxZoom: 17 });
-    map.once('moveend', () => layer.openPopup());
+    map.flyToBounds(layer.getBounds().pad(0.35), { duration: 0.9, maxZoom: FIT_MAX_ZOOM });
   }
+  openPopupAfterFly(() => layerIndex.get(id)); // re-resolves: safe if deleted mid-flight
 }
 
 document.getElementById('btnFitAll').addEventListener('click', () => {
@@ -1584,9 +1631,12 @@ fileInput.addEventListener('change', () => {
     try {
       const data = JSON.parse(reader.result);
       if (!data || !Array.isArray(data.entries)) throw new Error('Not a Hemlock backup file');
-      importData = data.entries.filter(e => e && e.id && e.kind && e.geometry && e.name);
+      importData = data.entries.filter(isValidEntry);
+      const skipped = data.entries.length - importData.length;
       document.getElementById('impInfo').textContent =
-        `“${f.name}” contains ${importData.length} observation${importData.length === 1 ? '' : 's'}. You currently have ${state.entries.length}. How do you want to import?`;
+        `“${f.name}” contains ${importData.length} valid observation${importData.length === 1 ? '' : 's'}` +
+        (skipped ? ` (${skipped} invalid skipped)` : '') +
+        `. You currently have ${state.entries.length}. How do you want to import?`;
       document.getElementById('impOverlay').classList.remove('hidden');
     } catch (err) {
       document.getElementById('impInfo').textContent = 'Could not read that file: ' + err.message;
@@ -1648,7 +1698,7 @@ document.getElementById('sWipe').addEventListener('click', () => {
 /* ================= Init ================= */
 renderList();
 /* on phone-sized screens the sidebar would cover the whole map — start collapsed */
-if (window.matchMedia('(max-width: 720px)').matches) {
+if (window.matchMedia('(max-width: ' + MOBILE_BP_PX + 'px)').matches) {
   document.getElementById('sidebar').classList.add('collapsed');
   document.body.classList.add('side-collapsed');
 }
