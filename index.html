@@ -1261,6 +1261,7 @@ document.addEventListener('keydown', e => {
     else if (shapeEdit.id) endShapeEdit(false);
     else if (activeTool) cancelTool();
     else if (guide.watchId !== null) stopGuide();
+    else if (typeof sp !== 'undefined' && sp.open) setSpeciesPanel(false);
     else cancelTool();
     closeOverlay('setOverlay'); closeOverlay('impOverlay'); closeOverlay('cfmOverlay');
   }
@@ -1809,7 +1810,7 @@ document.getElementById('sWipe').addEventListener('click', () => {
 const GBIF = 'https://api.gbif.org/v1';
 const OCC_TARGET = 600;      // how many occurrence points to pull for the heat/point view
 const OCC_PAGE = 300;        // GBIF max page size
-const FINLAND_BBOX = { minLat: 59.0, maxLat: 70.1, minLng: 19.0, maxLng: 31.6 };
+const HOTSPOT_RADIUS_M = 3000; // window used to recount the densest neighbourhood
 
 const sp = {
   open: false, taxonKey: null, name: '', points: [],
@@ -1829,11 +1830,14 @@ const spEl = {
   points: document.getElementById('spPoints'),
 };
 
-function toggleSpeciesPanel() {
-  sp.open = !sp.open;
-  spEl.panel.classList.toggle('hidden', !sp.open);
-  if (sp.open) setTimeout(() => spEl.search.focus(), 50);
+function setSpeciesPanel(open) {
+  sp.open = open;
+  spEl.panel.classList.toggle('hidden', !open);
+  const btn = document.querySelector('.toolbox button[data-tool="species"]');
+  if (btn) btn.classList.toggle('active', open);
+  if (open) setTimeout(() => spEl.search.focus(), 50);
 }
+function toggleSpeciesPanel() { setSpeciesPanel(!sp.open); }
 function spStatus(msg) {
   if (!msg) { spEl.status.classList.add('hidden'); return; }
   spEl.status.textContent = msg;
@@ -1890,13 +1894,15 @@ async function spFetchOccurrences() {
       const d = await (await fetch(url)).json();
       if (token !== sp.fetchSeq) return; // superseded by a newer search
       total = d.count;
-      (d.results || []).forEach(r => {
+      const batch = d.results || [];
+      batch.forEach(r => {
         if (Number.isFinite(r.decimalLatitude) && Number.isFinite(r.decimalLongitude)) {
           pts.push({ lat: r.decimalLatitude, lng: r.decimalLongitude, date: r.eventDate || null, key: r.key, src: 'GBIF', dataset: r.datasetName || '' });
         }
       });
       offset += OCC_PAGE;
-      if (d.endOfRecords || offset >= (d.count || 0) || offset >= 100000) break;
+      // stop on empty page too, so a degenerate response can't page hundreds of times
+      if (!batch.length || d.endOfRecords || offset >= (d.count || 0) || offset >= 100000) break;
     }
     // Optional FinBIF enrichment
     let lajiNote = '';
@@ -1923,10 +1929,11 @@ async function spFetchOccurrences() {
 
 /* FinBIF/laji.fi warehouse query — best-effort; may be blocked by CORS on some hosts */
 async function spFetchFinBIF(name, token) {
+  // token goes in the Authorization header only — never in the URL, where it would
+  // leak via browser history, Referer headers and server logs
   const url = 'https://api.laji.fi/v0/warehouse/query/unit/list?' +
     'taxonName=' + encodeURIComponent(name) +
-    '&onlyCount=false&pageSize=300&featureType=ORIGINAL_FEATURE' +
-    '&access_token=' + encodeURIComponent(state.settings.lajiToken);
+    '&onlyCount=false&pageSize=300&featureType=ORIGINAL_FEATURE';
   const d = await (await fetch(url, { headers: { Authorization: 'Bearer ' + state.settings.lajiToken } })).json();
   if (token !== sp.fetchSeq) return [];
   const out = [];
@@ -1985,10 +1992,12 @@ function spApplyToggles() {
 spEl.heat.addEventListener('change', spApplyToggles);
 spEl.points.addEventListener('change', spApplyToggles);
 
-/* --- Densest cluster: grid the points, pick the fullest cell --- */
+/* --- Densest cluster: grid to find a candidate, then recount within a fixed
+   radius so a cluster straddling a grid boundary isn't split/under-counted.
+   CELL 0.05° ≈ 5.5 km N–S and ≈ 2.3 km E–W at 65°N (lng degrees shrink poleward). --- */
 function spComputeDensest() {
   if (!sp.points.length) return null;
-  const CELL = 0.05; // ~2.7 km lat; good foraging-area granularity
+  const CELL = 0.05;
   const cells = new Map();
   for (const p of sp.points) {
     const key = Math.round(p.lat / CELL) + ',' + Math.round(p.lng / CELL);
@@ -1998,7 +2007,14 @@ function spComputeDensest() {
   }
   let best = null;
   for (const c of cells.values()) if (!best || c.n > best.n) best = c;
-  return best ? { lat: best.lat / best.n, lng: best.lng / best.n, n: best.n } : null;
+  if (!best) return null;
+  // recount everything within HOTSPOT_RADIUS_M of the candidate centroid
+  const seed = L.latLng(best.lat / best.n, best.lng / best.n);
+  const near = sp.points.filter(p => map.distance(seed, [p.lat, p.lng]) < HOTSPOT_RADIUS_M);
+  if (!near.length) return { lat: seed.lat, lng: seed.lng, n: best.n };
+  const lat = near.reduce((s, p) => s + p.lat, 0) / near.length;
+  const lng = near.reduce((s, p) => s + p.lng, 0) / near.length;
+  return { lat, lng, n: near.length };
 }
 function spFlyToDensest() {
   const h = spComputeDensest();
@@ -2034,7 +2050,7 @@ function spSaveHotspot(h) {
   openForm({ mode: 'create' });
 }
 
-document.getElementById('spClose').addEventListener('click', () => { sp.open = false; spEl.panel.classList.add('hidden'); });
+document.getElementById('spClose').addEventListener('click', () => setSpeciesPanel(false));
 document.getElementById('spClear').addEventListener('click', () => {
   spClearLayers(); spClearSuggest(); spStatus('');
   spEl.result.classList.add('hidden'); spEl.search.value = ''; sp.points = []; sp.taxonKey = null;
@@ -2057,6 +2073,7 @@ function spHighlight(items) { items.forEach((li, i) => li.classList.toggle('acti
 
 /* test hooks */
 window._spDebugPoints = () => sp.points.length;
+window._spDebugFirstPoint = () => sp.points[0] || null;
 window._spHotspot = () => sp.hotspot;
 
 /* ================= Init ================= */
