@@ -14,6 +14,17 @@
     --violet: #6b46c1;
     --bg: #f6f5f1;
     --panel: #ffffff;
+    --surface: #ffffff;      /* solid surfaces: dialogs, controls, search box */
+    --panel-2: #fbfaf7;      /* secondary surface: inputs, footer, buttons */
+    --hover: #eef4ee;
+    --hover-2: #e2e8e2;
+    --selected: #e9f2ea;
+    --selected-line: #c8dccb;
+    --map-bg: #dde5dd;
+    --head-grad-a: #f2f7f3;  /* sidebar header gradient */
+    --head-grad-b: #ffffff;
+    --sp-head-a: #eef4f0;    /* species panel header gradient */
+    --sp-head-b: #ffffff;
     --ink: #24312a;
     --muted: #6e7d74;
     --line: #e3e1d9;
@@ -21,6 +32,49 @@
     --radius: 10px;
     font-size: 15px;
   }
+  /* ---------- Night theme: redefine the palette; the map tiles get a filter ---------- */
+  body.dark {
+    --green: #6aa982;
+    --green-dark: #8fcaa7;
+    --bg: #10130e;
+    --panel: #191e16;
+    --surface: #1e241b;
+    --panel-2: #232a1f;
+    --hover: #2a3326;
+    --hover-2: #34402f;
+    --selected: #24402e;
+    --selected-line: #3a5a45;
+    --map-bg: #0e120c;
+    --head-grad-a: #202a20;
+    --head-grad-b: #191e16;
+    --sp-head-a: #202a20;
+    --sp-head-b: #191e16;
+    --ink: #e7ece1;
+    --muted: #9aa896;
+    --line: #333c30;
+    --danger: #e0705f;
+  }
+  /* invert most raster basemaps to a dark scheme (topo / street / MapAnt / NLS);
+     hue-rotate re-corrects colours so greens/water still read naturally */
+  body.dark .tl-invert { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9) saturate(.85); }
+  /* satellite imagery looks wrong inverted — just dim it instead */
+  body.dark .tl-dim { filter: brightness(.62) contrast(1.05) saturate(.9); }
+  /* leaflet's own chrome (zoom, layers, scale, popups, attribution) */
+  body.dark .leaflet-bar a,
+  body.dark .leaflet-control-layers,
+  body.dark .leaflet-control-attribution { background: var(--surface); color: var(--ink); }
+  body.dark .leaflet-bar a { color: var(--ink); border-bottom-color: var(--line); }
+  /* the layers-toggle is an ICON image — use background-color (not the shorthand,
+     which would wipe the icon) and invert the dark sprite so it shows on dark bg */
+  body.dark .leaflet-control-layers-toggle { background-color: var(--surface); filter: invert(1) brightness(1.6); }
+  body.dark .leaflet-control-attribution a { color: var(--green-dark); }
+  body.dark .leaflet-popup-content-wrapper,
+  body.dark .leaflet-popup-tip { background: var(--surface); color: var(--ink); }
+  body.dark .leaflet-control-scale-line { background: rgba(25,30,22,.7); color: var(--ink); border-color: var(--muted); }
+  /* monochrome glyph icons (⬡ draw-area, rotate compass) must follow the theme */
+  body.dark .toolbox button, body.dark .leaflet-control-rotate { color: var(--ink); }
+  /* keep the occurrence heatmap readable but never fully opaque over the map */
+  .leaflet-heatmap-layer { opacity: .88; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -47,7 +101,7 @@
   #sidebar header {
     padding: 14px 16px 10px;
     border-bottom: 1px solid var(--line);
-    background: linear-gradient(180deg, #f2f7f3, #fff);
+    background: linear-gradient(180deg, var(--head-grad-a), var(--head-grad-b));
   }
   #sidebar h1 {
     margin: 0;
@@ -64,15 +118,15 @@
   .search-row { display: flex; gap: 8px; padding: 10px 12px 6px; }
   .search-row input[type=search] {
     flex: 1; padding: 7px 10px; border: 1px solid var(--line);
-    border-radius: var(--radius); font-size: .88rem; background: #fbfaf7;
+    border-radius: var(--radius); font-size: .88rem; background: var(--panel-2);
   }
   .search-row select {
     border: 1px solid var(--line); border-radius: var(--radius);
-    font-size: .8rem; background: #fbfaf7; color: var(--ink); padding: 0 6px;
+    font-size: .8rem; background: var(--panel-2); color: var(--ink); padding: 0 6px;
   }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 12px; }
   .chip {
-    border: 1px solid var(--line); background: #fbfaf7; color: var(--muted);
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--muted);
     border-radius: 999px; padding: 3px 11px; font-size: .76rem; cursor: pointer;
     user-select: none; transition: all .12s;
   }
@@ -94,8 +148,8 @@
     padding: 8px 8px; border-radius: var(--radius); cursor: pointer;
     border: 1px solid transparent;
   }
-  #list li.item:hover { background: #f2f6f2; }
-  #list li.item.selected { background: #e9f2ea; border-color: #c8dccb; }
+  #list li.item:hover { background: var(--hover); }
+  #list li.item.selected { background: var(--selected); border-color: var(--selected-line); }
   .dot {
     width: 30px; height: 30px; min-width: 30px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
@@ -111,19 +165,19 @@
     border: none; background: none; cursor: pointer; font-size: .85rem;
     padding: 3px 4px; border-radius: 6px; color: var(--muted);
   }
-  .item .actions button:hover { background: #e2e8e2; color: var(--ink); }
+  .item .actions button:hover { background: var(--hover-2); color: var(--ink); }
 
-  #sidebar footer { border-top: 1px solid var(--line); padding: 8px 12px 10px; background: #fbfaf7; }
+  #sidebar footer { border-top: 1px solid var(--line); padding: 8px 12px 10px; background: var(--panel-2); }
   #stats { font-size: .73rem; color: var(--muted); margin-bottom: 6px; }
   .btnrow { display: flex; flex-wrap: wrap; gap: 6px; }
   .btnrow button {
-    flex: 1; min-width: 68px; border: 1px solid var(--line); background: #fff;
+    flex: 1; min-width: 68px; border: 1px solid var(--line); background: var(--surface);
     border-radius: 8px; padding: 6px 4px; font-size: .74rem; cursor: pointer; color: var(--ink);
   }
   .btnrow button:hover { border-color: var(--green); color: var(--green-dark); }
 
   /* ---------- Map ---------- */
-  #map { flex: 1; height: 100%; z-index: 1; background: #dde5dd; }
+  #map { flex: 1; height: 100%; z-index: 1; background: var(--map-bg); }
   #map.cursor-crosshair { cursor: crosshair; }
   #map.painting { cursor: cell; touch-action: none; }
 
@@ -131,7 +185,7 @@
   #sideToggle {
     position: absolute; top: 12px; left: 12px; z-index: 1300;
     width: 34px; height: 34px; border-radius: 8px;
-    border: 1px solid var(--line); background: #fff; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface); cursor: pointer;
     font-size: 1rem; box-shadow: 0 1px 4px rgba(0,0,0,.15);
     display: none;
   }
@@ -140,18 +194,18 @@
   /* ---------- Tool buttons (Leaflet control) ---------- */
   .toolbox { display: flex; flex-direction: column; gap: 5px; }
   .toolbox button {
-    width: 38px; height: 38px; border-radius: 9px; border: 1px solid #cfd6cf;
-    background: #fff; cursor: pointer; font-size: 1.05rem;
+    width: 38px; height: 38px; border-radius: 9px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--ink); cursor: pointer; font-size: 1.05rem;
     box-shadow: 0 1px 4px rgba(0,0,0,.18);
   }
-  .toolbox button:hover { background: #eef4ee; }
+  .toolbox button:hover { background: var(--hover); }
   .toolbox button.active { background: var(--green); border-color: var(--green-dark); }
 
   /* ---------- Place search ---------- */
   .searchbox { width: 272px; }
   .search-input-row {
-    display: flex; align-items: center; background: #fff; border-radius: 9px;
-    border: 1px solid #cfd6cf; box-shadow: 0 1px 4px rgba(0,0,0,.18); overflow: hidden;
+    display: flex; align-items: center; background: var(--surface); border-radius: 9px;
+    border: 1px solid var(--line); box-shadow: 0 1px 4px rgba(0,0,0,.18); overflow: hidden;
   }
   .search-input-row input {
     flex: 1; border: none; outline: none; padding: 9px 11px; font-size: .85rem;
@@ -162,12 +216,12 @@
   }
   .search-input-row button:hover { opacity: .7; }
   #searchResults {
-    list-style: none; margin: 5px 0 0; padding: 4px; background: #fff;
+    list-style: none; margin: 5px 0 0; padding: 4px; background: var(--surface);
     border-radius: 9px; box-shadow: 0 2px 10px rgba(0,0,0,.28);
     max-height: 280px; overflow-y: auto;
   }
   #searchResults li { padding: 7px 9px; border-radius: 6px; cursor: pointer; font-size: .8rem; line-height: 1.35; }
-  #searchResults li:hover { background: #eef4ee; }
+  #searchResults li:hover { background: var(--hover); }
   #searchResults li .sr-type { color: var(--muted); font-size: .7rem; }
   #searchResults li.sr-note { color: var(--muted); cursor: default; }
   #searchResults li.sr-note:hover { background: none; }
@@ -231,7 +285,7 @@
   .pop .pop-tags { font-size: .72rem; color: var(--violet); }
   .pop .pop-actions { display: flex; gap: 6px; margin-top: 8px; }
   .pop .pop-actions button {
-    flex: 1; border: 1px solid var(--line); background: #fbfaf7; border-radius: 7px;
+    flex: 1; border: 1px solid var(--line); background: var(--panel-2); border-radius: 7px;
     font-size: .74rem; padding: 4px 2px; cursor: pointer;
   }
   .pop .pop-actions button:hover { border-color: var(--green); }
@@ -243,7 +297,7 @@
     display: flex; align-items: center; justify-content: center;
   }
   .dialog {
-    background: #fff; border-radius: 14px; width: min(430px, 92vw);
+    background: var(--surface); border-radius: 14px; width: min(430px, 92vw);
     max-height: 90vh; overflow-y: auto;
     box-shadow: 0 12px 40px rgba(0,0,0,.35); padding: 20px 22px;
   }
@@ -252,7 +306,7 @@
   .field label { display: block; font-size: .76rem; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
   .field input[type=text], .field input[type=date], .field input[type=password], .field textarea, .field select {
     width: 100%; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px;
-    font-size: .88rem; font-family: inherit; background: #fbfaf7;
+    font-size: .88rem; font-family: inherit; background: var(--panel-2);
   }
   .field textarea { resize: vertical; min-height: 64px; }
   .radio-row { display: flex; gap: 6px; }
@@ -262,14 +316,14 @@
     margin: 0;
   }
   .radio-row input { display: none; }
-  .radio-row label.on { border-color: var(--green); background: #e9f2ea; color: var(--green-dark); }
+  .radio-row label.on { border-color: var(--green); background: var(--selected); color: var(--green-dark); }
   .color-row { display: flex; align-items: center; gap: 10px; }
-  .color-row input[type=color] { width: 44px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 2px; cursor: pointer; }
+  .color-row input[type=color] { width: 44px; height: 30px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); padding: 2px; cursor: pointer; }
   .color-row .note { font-size: .72rem; color: var(--muted); }
   .dialog .drow { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
   .dialog .drow button {
     border-radius: 8px; padding: 8px 16px; font-size: .85rem; cursor: pointer;
-    border: 1px solid var(--line); background: #fff;
+    border: 1px solid var(--line); background: var(--surface);
   }
   .dialog .drow button.primary { background: var(--green); border-color: var(--green-dark); color: #fff; font-weight: 600; }
   .dialog .drow button.primary:hover { background: var(--green-dark); }
@@ -277,7 +331,7 @@
   .dialog p.help { font-size: .78rem; color: var(--muted); line-height: 1.5; }
   .dialog p.help a { color: var(--green-dark); }
   .import-choice { display: flex; gap: 8px; margin: 10px 0; }
-  .import-choice button { flex: 1; padding: 10px 6px; border: 1px solid var(--line); border-radius: 8px; background: #fbfaf7; cursor: pointer; font-size: .82rem; }
+  .import-choice button { flex: 1; padding: 10px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: pointer; font-size: .82rem; }
   .import-choice button:hover { border-color: var(--green); }
 
   #storageWarn {
@@ -303,24 +357,24 @@
   }
   #speciesPanel .sp-head {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 12px; background: linear-gradient(180deg, #eef4f0, #fff); border-bottom: 1px solid var(--line);
+    padding: 10px 12px; background: linear-gradient(180deg, var(--sp-head-a), var(--sp-head-b)); border-bottom: 1px solid var(--line);
   }
   .sp-title { font-weight: 700; color: var(--green-dark); }
   #speciesPanel .sp-head button {
     border: none; background: none; font-size: 1rem; cursor: pointer; color: var(--muted); padding: 2px 6px; border-radius: 6px;
   }
-  #speciesPanel .sp-head button:hover { background: #e2e8e2; color: var(--ink); }
+  #speciesPanel .sp-head button:hover { background: var(--hover-2); color: var(--ink); }
   .sp-searchrow { padding: 10px 12px 6px; }
   .sp-searchrow input {
     width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
-    font-size: .88rem; font-family: inherit; background: #fbfaf7;
+    font-size: .88rem; font-family: inherit; background: var(--panel-2);
   }
   #spSuggest {
-    list-style: none; margin: 0 12px; padding: 4px; background: #fff;
+    list-style: none; margin: 0 12px; padding: 4px; background: var(--surface);
     border: 1px solid var(--line); border-radius: 8px; max-height: 240px; overflow-y: auto;
   }
   #spSuggest li { padding: 7px 9px; border-radius: 6px; cursor: pointer; line-height: 1.3; }
-  #spSuggest li:hover, #spSuggest li.active { background: #eef4ee; }
+  #spSuggest li:hover, #spSuggest li.active { background: var(--hover); }
   #spSuggest li .sci { font-style: italic; }
   #spSuggest li .rankk { font-size: .72rem; color: var(--muted); }
   #spSuggest li.sp-note { color: var(--muted); cursor: default; }
@@ -337,9 +391,9 @@
     border-radius: 8px; padding: 8px 6px; font-size: .8rem; cursor: pointer;
   }
   .sp-btn:hover { background: var(--green-dark); }
-  .sp-btn.ghost { background: #fff; color: var(--ink); font-weight: 500; }
-  .sp-btn.ghost:hover { background: #f0f4f0; border-color: var(--green); }
-  .sp-foot { padding: 8px 12px; border-top: 1px solid var(--line); background: #fbfaf7; color: var(--muted); font-size: .7rem; line-height: 1.4; }
+  .sp-btn.ghost { background: var(--surface); color: var(--ink); font-weight: 500; }
+  .sp-btn.ghost:hover { background: var(--hover); border-color: var(--green); }
+  .sp-foot { padding: 8px 12px; border-top: 1px solid var(--line); background: var(--panel-2); color: var(--muted); font-size: .7rem; line-height: 1.4; }
 
   .occ-dot {
     width: 12px; height: 12px; border-radius: 50%;
@@ -416,6 +470,7 @@
       <button id="btnExport" title="Download a JSON backup">⬇ Backup</button>
       <button id="btnGeo" title="Download as GeoJSON">⬇ GeoJSON</button>
       <button id="btnImport" title="Restore from a backup file">⬆ Import</button>
+      <button id="btnTheme" title="Toggle day / night">🌙 Night</button>
       <button id="btnSettings" title="Settings">⚙ Settings</button>
       <button id="btnHide" title="Hide panel">⟨ Hide</button>
     </div>
@@ -574,7 +629,7 @@ catch (e) { storageOk = false; document.getElementById('storageWarn').classList.
 
 const state = {
   entries: [],
-  settings: { nlsKey: '', view: null, baseLayer: null, bearing: 0 },
+  settings: { nlsKey: '', view: null, baseLayer: null, bearing: 0, theme: null },
 };
 
 function loadState() {
@@ -686,24 +741,24 @@ const ATTR_MML = 'Map data © <a href="https://www.maanmittauslaitos.fi/en">Nati
 function buildBaseLayers() {
   const layers = {
     'Topographic (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, maxNativeZoom: 17,
+      maxZoom: 19, maxNativeZoom: 17, className: 'tl-invert',
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM · © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)',
     }),
     'Satellite (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom: 19, maxNativeZoom: 19,
+      maxZoom: 19, maxNativeZoom: 19, className: 'tl-dim',
       attribution: 'Imagery © Esri, Maxar, Earthstar Geographics',
     }),
     /* Kapsi's mirror was shut down in 2025 (410 Gone) — MapAnt is the keyless
        high-detail alternative, rendered from NLS laser-scanning data. */
     'MapAnt (terrain detail)': L.tileLayer('https://wmts.mapant.fi/wmts_EPSG3857.php?z={z}&x={x}&y={y}', {
-      maxZoom: 19, maxNativeZoom: 17,
+      maxZoom: 19, maxNativeZoom: 17, className: 'tl-invert',
       attribution: '<a href="https://www.mapant.fi">MapAnt.fi</a> (CC BY 4.0) · ' + ATTR_MML,
     }),
   };
   if (state.settings.nlsKey) {
     layers['Maastokartta (NLS official)'] = L.tileLayer(
       'https://avoin-karttakuva.maanmittauslaitos.fi/avoin/wmts/1.0.0/maastokartta/default/WGS84_Pseudo-Mercator/{z}/{y}/{x}.png?api-key=' + encodeURIComponent(state.settings.nlsKey), {
-      maxZoom: 19, maxNativeZoom: 16, attribution: ATTR_MML,
+      maxZoom: 19, maxNativeZoom: 16, className: 'tl-invert', attribution: ATTR_MML,
     });
   }
   return layers;
@@ -1779,6 +1834,28 @@ function finishImport() {
 }
 document.getElementById('impCancel').addEventListener('click', () => { importData = null; closeOverlay('impOverlay'); });
 
+/* ================= Day / night theme ================= */
+function applyTheme(theme) {
+  const dark = theme === 'night';
+  document.body.classList.toggle('dark', dark);
+  const btn = document.getElementById('btnTheme');
+  if (btn) btn.textContent = dark ? '☀ Day' : '🌙 Night';
+}
+/* first run: no saved choice → follow the OS preference */
+(function initTheme() {
+  let t = state.settings.theme;
+  if (t !== 'day' && t !== 'night') {
+    t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'night' : 'day';
+  }
+  applyTheme(t);
+})();
+document.getElementById('btnTheme').addEventListener('click', () => {
+  const next = document.body.classList.contains('dark') ? 'day' : 'night';
+  state.settings.theme = next;
+  applyTheme(next);
+  saveState();
+});
+
 /* ================= Settings ================= */
 document.getElementById('btnSettings').addEventListener('click', () => {
   document.getElementById('sNlsKey').value = state.settings.nlsKey || '';
@@ -1804,7 +1881,7 @@ document.getElementById('sWipe').addEventListener('click', () => {
     if (map.setBearing) map.setBearing(0);
     if (typeof spClearLayers === 'function') spClearLayers();
     state.entries = [];
-    state.settings = { nlsKey: '', view: null, baseLayer: null, bearing: 0 };
+    state.settings = { nlsKey: '', view: null, baseLayer: null, bearing: 0, theme: state.settings.theme };
     if (storageOk) localStorage.removeItem(LS_KEY);
     rebuildAllLayers();
     renderList();
@@ -1968,13 +2045,27 @@ function spClearLayers() {
   sp.heatLayer = sp.pointLayer = sp.hotspotLayer = null;
   sp.hotspot = null;
 }
+/* Heat radius grows with zoom: a fixed pixel radius makes clusters dissipate as you
+   zoom in (same ground area spreads over more pixels). Scaling radius keeps the
+   hotspot cohesive and visible when zoomed in. Clamped so it never floods the view. */
+function spHeatRadius(z) { return Math.round(Math.max(24, Math.min(80, 16 + (z - 4) * 5))); }
+/* bold, saturated palette so the heat reads clearly even over a light basemap;
+   low blur keeps blobs concentrated rather than washed out */
+const SP_HEAT_OPTS = {
+  minOpacity: 0.55, max: 2.5,
+  gradient: { 0.2: '#2b5fd0', 0.4: '#1f9e5a', 0.6: '#f2c200', 0.78: '#f2670a', 0.9: '#e01e26', 1: '#8b0f16' },
+};
+function spApplyHeatZoom() {
+  if (!sp.heatLayer) return;
+  const r = spHeatRadius(map.getZoom());
+  sp.heatLayer.setOptions({ radius: r, blur: Math.round(r * 0.35) });
+}
 function spBuildLayers() {
   spClearLayers();
   if (L.heatLayer) {
-    sp.heatLayer = L.heatLayer(sp.points.map(p => [p.lat, p.lng, 1]), {
-      radius: 22, blur: 18, minOpacity: 0.35,
-      gradient: { 0.2: '#2b83ba', 0.45: '#abdda4', 0.7: '#fdae61', 1: '#d7191c' },
-    });
+    const r = spHeatRadius(map.getZoom());
+    sp.heatLayer = L.heatLayer(sp.points.map(p => [p.lat, p.lng, 1]),
+      Object.assign({ radius: r, blur: Math.round(r * 0.35) }, SP_HEAT_OPTS));
   }
   sp.pointLayer = L.layerGroup(sp.points.map(p => {
     const m = L.marker([p.lat, p.lng], {
@@ -1998,6 +2089,7 @@ function spApplyToggles() {
 }
 spEl.heat.addEventListener('change', spApplyToggles);
 spEl.points.addEventListener('change', spApplyToggles);
+map.on('zoomend', spApplyHeatZoom); // keep the heatmap cohesive across zoom levels
 
 /* --- Densest cluster: grid to find a candidate, then recount within a fixed
    radius so a cluster straddling a grid boundary isn't split/under-counted.
@@ -2083,6 +2175,7 @@ window._spDebugPoints = () => sp.points.length;
 window._spDebugFirstPoint = () => sp.points[0] || null;
 window._spHotspot = () => sp.hotspot;
 window._spTaxonKey = () => sp.taxonKey;
+window._spHeatRadius = () => sp.heatLayer && sp.heatLayer.options.radius;
 
 /* ================= Init ================= */
 renderList();
