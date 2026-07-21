@@ -1894,6 +1894,10 @@ const GBIF = 'https://api.gbif.org/v1';
 const OCC_TARGET = 600;      // how many occurrence points to pull for the heat/point view
 const OCC_PAGE = 300;        // GBIF max page size
 const HOTSPOT_RADIUS_M = 3000; // window used to recount the densest neighbourhood
+// drop only the very coarsest GBIF records (region-centroid / huge grid squares) —
+// the worst offenders for plotting on land features like the sea. Records with an
+// unknown uncertainty are kept (many good ones don't report it).
+const MAX_COORD_UNCERTAINTY_M = 25000;
 
 const sp = {
   open: false, taxonKey: null, name: '', kingdom: null, points: [],
@@ -2009,6 +2013,8 @@ async function spFetchOccurrences() {
       total = d.count;
       const batch = d.results || [];
       batch.forEach(r => {
+        const unc = r.coordinateUncertaintyInMeters;
+        if (Number.isFinite(unc) && unc > MAX_COORD_UNCERTAINTY_M) return; // skip very coarse records
         if (Number.isFinite(r.decimalLatitude) && Number.isFinite(r.decimalLongitude)) {
           pts.push({ lat: r.decimalLatitude, lng: r.decimalLongitude, date: r.eventDate || null, key: r.key, src: 'GBIF', dataset: r.datasetName || '' });
         }
@@ -2107,13 +2113,26 @@ function spComputeDensest() {
   let best = null;
   for (const c of cells.values()) if (!best || c.n > best.n) best = c;
   if (!best) return null;
-  // recount everything within HOTSPOT_RADIUS_M of the candidate centroid
   const seed = L.latLng(best.lat / best.n, best.lng / best.n);
   const near = sp.points.filter(p => map.distance(seed, [p.lat, p.lng]) < HOTSPOT_RADIUS_M);
-  if (!near.length) return { lat: seed.lat, lng: seed.lng, n: best.n };
-  const lat = near.reduce((s, p) => s + p.lat, 0) / near.length;
-  const lng = near.reduce((s, p) => s + p.lng, 0) / near.length;
-  return { lat, lng, n: near.length };
+  if (!near.length) {
+    // fall back to the recorded point nearest the cell centroid — still a real spot
+    let np = sp.points[0], nd = Infinity;
+    for (const p of sp.points) { const d = map.distance(seed, [p.lat, p.lng]); if (d < nd) { nd = d; np = p; } }
+    return { lat: np.lat, lng: np.lng, n: best.n };
+  }
+  // Anchor the hotspot ON an actual recorded point, never an averaged position —
+  // the mean of points around a bay/coast can fall in the sea though every real
+  // observation is on land. Pick the cluster point with the most neighbours within
+  // ~1 km = the true local density peak (a genuine, on-land observation).
+  const PEAK_R = Math.max(600, HOTSPOT_RADIUS_M / 3);
+  let peak = near[0], peakCount = -1;
+  for (const p of near) {
+    let c = 0;
+    for (const q of near) if (map.distance([p.lat, p.lng], [q.lat, q.lng]) < PEAK_R) c++;
+    if (c > peakCount) { peakCount = c; peak = p; }
+  }
+  return { lat: peak.lat, lng: peak.lng, n: near.length };
 }
 function spFlyToDensest() {
   const h = spComputeDensest();
@@ -2172,6 +2191,7 @@ function spHighlight(items) { items.forEach((li, i) => li.classList.toggle('acti
 
 /* test hooks */
 window._spDebugPoints = () => sp.points.length;
+window._spAllPoints = () => sp.points;
 window._spDebugFirstPoint = () => sp.points[0] || null;
 window._spHotspot = () => sp.hotspot;
 window._spTaxonKey = () => sp.taxonKey;
