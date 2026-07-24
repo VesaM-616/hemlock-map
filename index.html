@@ -2062,7 +2062,9 @@ const SP_HEAT_OPTS = {
   gradient: { 0.2: '#2b5fd0', 0.4: '#1f9e5a', 0.6: '#f2c200', 0.78: '#f2670a', 0.9: '#e01e26', 1: '#8b0f16' },
 };
 function spApplyHeatZoom() {
-  if (!sp.heatLayer) return;
+  // must be ON the map — setOptions→redraw touches the layer's _map, which is null
+  // once the layer has been removed (heat toggled off)
+  if (!sp.heatLayer || !map.hasLayer(sp.heatLayer)) return;
   const r = spHeatRadius(map.getZoom());
   sp.heatLayer.setOptions({ radius: r, blur: Math.round(r * 0.35) });
 }
@@ -2096,6 +2098,23 @@ function spApplyToggles() {
 spEl.heat.addEventListener('change', spApplyToggles);
 spEl.points.addEventListener('change', spApplyToggles);
 map.on('zoomend', spApplyHeatZoom); // keep the heatmap cohesive across zoom levels
+
+/* leaflet.heat only re-anchors its canvas on `moveend`, so during a pan (or rotate)
+   the heat visibly lags and snaps back. Re-anchor it every animation frame while the
+   map moves so it tracks the tiles. rAF-throttled → at most one redraw per frame. */
+let heatFollowRAF = null;
+function spHeatFollow() {
+  if (heatFollowRAF || !sp.heatLayer || !map.hasLayer(sp.heatLayer)) return;
+  heatFollowRAF = requestAnimationFrame(() => {
+    heatFollowRAF = null;
+    if (map._animatingZoom) return; // leaflet.heat's own zoom-anim handles zooms
+    if (sp.heatLayer && map.hasLayer(sp.heatLayer) && sp.heatLayer._reset) {
+      try { sp.heatLayer._reset(); } catch (e) { /* internal API guard */ }
+    }
+  });
+}
+map.on('move', spHeatFollow);
+map.on('rotate', spHeatFollow);
 
 /* --- Densest cluster: grid to find a candidate, then recount within a fixed
    radius so a cluster straddling a grid boundary isn't split/under-counted.
@@ -2196,6 +2215,7 @@ window._spDebugFirstPoint = () => sp.points[0] || null;
 window._spHotspot = () => sp.hotspot;
 window._spTaxonKey = () => sp.taxonKey;
 window._spHeatRadius = () => sp.heatLayer && sp.heatLayer.options.radius;
+window._spHeatLayer = () => sp.heatLayer;
 
 /* ================= Init ================= */
 renderList();
